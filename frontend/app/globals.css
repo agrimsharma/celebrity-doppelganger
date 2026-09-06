@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  color: var(--foreground);
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+  min-height: 100vh;
+  /* light, clean canvas - the color lives on the cards now, not the whole page */
+  background: linear-gradient(135deg, #f4f1ea 0%, #f0f3ec 50%, #f6efe8 100%);
+  background-attachment: fixed;
+}
+
+/* solid, crisp card - flat color + real drop shadow, no blur/transparency */
+.solid-card {
+  background: #ffffff;
+  border: 1.5px solid rgba(0, 0, 0, 0.06);
+  box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.04);
+}
+
+/* the three flat accent colors cycled across result cards */
+.card-accent-0 { background: #c6f24e; } /* lime green - the "best match" color */
+.card-accent-1 { background: #a8c8f5; } /* soft periwinkle blue */
+.card-accent-2 { background: #f7b8d0; } /* soft pink */
+.card-accent-you { background: #fdf3d9; } /* warm cream - visually distinct from the celeb colors */
+
+.tactile-btn {
+  box-shadow: 0 6px 0 rgba(0, 0, 0, 0.15), 0 8px 20px rgba(0, 0, 0, 0.12);
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+.tactile-btn:active {
+  transform: translateY(4px);
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.15), 0 4px 10px rgba(0, 0, 0, 0.1);
+}
+
+.star-accent {
+  position: absolute;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.08));
+}

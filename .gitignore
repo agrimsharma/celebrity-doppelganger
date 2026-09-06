@@ -1,0 +1,31 @@
+# Dataset, embeddings, thumbnails — large, and IMDB-WIKI's academic-only license means it
+# shouldn't be redistributed via this repo anyway (see docs/PRD.md constraints)
+data/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Node / Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.vercel/
+frontend/*.tsbuildinfo
+frontend/next-env.d.ts
+
+# Generated / packaged artifacts (regenerable from scripts/ + data/)
+imdb_friend_package.zip
+reports/*.html
+
+# Terraform (added when backend work starts)
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+crash.log
+
+# OS / editor
+.DS_Store
+*.log

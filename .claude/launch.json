@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "celeb-doppelganger-frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "C:\\Users\\91913\\celebrity-doppelganger\\frontend", "run", "dev"],
+      "port": 3000
+    }
+  ]
+}
