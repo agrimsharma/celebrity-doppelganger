@@ -54,8 +54,13 @@ COMPLAINTS_MODEL_REPO=<you>/cfpb-complaints-distilbert ./infra/session/up.sh
 - [ ] `12-api-docs`: `https://churn-api.<ip>.sslip.io/docs` (FastAPI Swagger)
 - [ ] Screenshot: Grafana "Churn platform" dashboard (latency by route, predictions, drift mass, Claude tokens)
 
-### 4. Wrap-up
-- [ ] `13-teardown`: `./infra/session/down.sh` → "Destroy complete"
+### 4. CI/CD
+- [ ] `13-cicd`: make a visible one-line change (e.g. the subtitle in `frontend/app/page.tsx`), push to
+      `main`, show the "Deploy to AKS" run in GitHub Actions (OIDC login, ACR build, helm rollout), then
+      reload the live site with the change
+
+### 5. Wrap-up
+- [ ] `14-teardown`: `./infra/session/down.sh` → "Destroy complete"
 - [ ] Azure portal → Cost Management: screenshot of the day's cost
 - [ ] `az group list -o table` shows nothing left
 

@@ -18,13 +18,26 @@ az account show >/dev/null 2>&1 || { echo "run: az login"; exit 1; }
 [ -f "$ROOT/infra/azure/terraform.tfvars" ] || { echo "copy infra/azure/terraform.tfvars.example -> terraform.tfvars"; exit 1; }
 [ -f "$ROOT/data/deploy/index/thumbnails.bin" ] || python "$ROOT/scripts/package_index.py"
 
-step "1/9 terraform apply (AKS, ACR, storage, identity, budget)"
+step "1/9 terraform apply (AKS, ACR, storage, workload + GitHub OIDC identities, budget)"
 $TF init -input=false >/dev/null
 $TF apply -auto-approve -input=false
 out() { $TF output -raw "$1"; }
 RG=$(out resource_group); ACR=$(out acr_name); REG=$(out acr_login_server); SA=$(out storage_account)
 CLIENT_ID=$(out dopp_backend_client_id); EMAIL=$(out alert_email)
 eval "$(out get_credentials)"
+
+# turn on CD: deploy-aks.yml in each repo runs only while these repo variables exist
+if command -v gh >/dev/null && GH_TOKEN="$(gh auth token --user "${GH_USER:-agrimsharma}" 2>/dev/null)"; then
+  for repo in celebrity-doppelganger saas-churn-platform; do
+    for kv in "AZURE_CLIENT_ID=$(out github_actions_client_id)" "AZURE_TENANT_ID=$(out tenant_id)" \
+              "AZURE_SUBSCRIPTION_ID=$(out subscription_id)" "AKS_RG=$RG" "AKS_NAME=$(out cluster_name)" "ACR_NAME=$ACR"; do
+      GH_TOKEN="$GH_TOKEN" gh variable set "${kv%%=*}" -R "${GH_USER:-agrimsharma}/$repo" -b "${kv#*=}" >/dev/null
+    done
+  done
+  echo "CD enabled: pushes to main now deploy to this cluster"
+else
+  echo "(gh not logged in as ${GH_USER:-agrimsharma}: CD stays off; up.sh still deploys directly)"
+fi
 
 step "2/9 ingress-nginx (public load balancer)"
 helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx >/dev/null 2>&1 || true

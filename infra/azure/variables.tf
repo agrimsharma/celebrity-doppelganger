@@ -46,3 +46,14 @@ variable "dopp_service_account" {
   type    = string
   default = "doppelganger-backend"
 }
+
+variable "github_owner" {
+  description = "GitHub account whose repos may deploy to this cluster via OIDC (empty = no CI/CD identity)."
+  type        = string
+  default     = "agrimsharma"
+}
+
+variable "github_repos" {
+  type    = list(string)
+  default = ["celebrity-doppelganger", "saas-churn-platform"]
+}

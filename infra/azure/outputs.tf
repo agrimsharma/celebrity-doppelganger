@@ -26,3 +26,19 @@ output "dopp_backend_client_id" {
 output "alert_email" {
   value = var.alert_email
 }
+
+output "cluster_name" {
+  value = azurerm_kubernetes_cluster.main.name
+}
+
+output "tenant_id" {
+  value = data.azurerm_client_config.current.tenant_id
+}
+
+output "subscription_id" {
+  value = var.subscription_id
+}
+
+output "github_actions_client_id" {
+  value = local.cicd ? azuread_application.github[0].client_id : ""
+}
