@@ -162,6 +162,14 @@ def test_api_key_required_when_configured(client_with, monkeypatch):
     assert r.status_code == 200
 
 
+def test_metrics_endpoint_counts_outcomes(client_with):
+    with client_with(lambda q: (q, 0.9)) as client:
+        client.post("/match", json={"image": png_data_uri()})
+        text = client.get("/metrics/").text
+    assert 'doppelganger_match_total{outcome="ok"}' in text
+    assert "doppelganger_match_seconds_bucket" in text
+
+
 def test_probes(client_with):
     with client_with(None) as client:
         assert client.get("/healthz").status_code == 200

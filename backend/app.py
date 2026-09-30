@@ -11,6 +11,7 @@ Run:  uvicorn backend.app:app --port 8787
 """
 import base64
 import binascii
+import json
 import logging
 import os
 import time
@@ -20,6 +21,7 @@ import numpy as np
 from fastapi import FastAPI, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
+from prometheus_client import Counter, Histogram, make_asgi_app
 
 from backend.matcher import DEFAULT_CALIBRATION, Calibration, Index
 
@@ -35,6 +37,13 @@ API_KEY = os.environ.get("API_KEY")
 TOP_K = 3
 
 log = logging.getLogger("doppelganger")
+
+# Prometheus metrics (scraped at /metrics by the ServiceMonitor in the Helm chart)
+MATCH_SECONDS = Histogram("doppelganger_match_seconds", "End-to-end /match latency (decode, detect, embed, search)",
+                          buckets=(0.05, 0.1, 0.2, 0.3, 0.5, 0.75, 1, 1.5, 2, 3, 5, 10))
+MATCH_OUTCOMES = Counter("doppelganger_match_total", "/match requests by outcome", ["outcome"])
+TOP_STRENGTH = Histogram("doppelganger_top_match_strength", "Calibrated match strength of the best match",
+                         buckets=[i / 10 for i in range(1, 11)])
 state = {"index": None, "embedder": None}
 
 
@@ -68,6 +77,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Celebrity Doppelganger API", version="1.0.0", lifespan=lifespan)
+app.mount("/metrics", make_asgi_app())
 
 
 def error(code: str, status: int = 200):
@@ -137,6 +147,15 @@ async def match(request: Request):
         result = await run_in_threadpool(match_image, body.get("image") if isinstance(body, dict) else None)
     except Exception:
         log.exception("match failed")  # logs the traceback, never the image
+        MATCH_OUTCOMES.labels("server_error").inc()
         return error("server_error", 500)
-    log.info("match took %.0f ms", (time.perf_counter() - t0) * 1000)
+    elapsed = time.perf_counter() - t0
+    MATCH_SECONDS.observe(elapsed)
+    if isinstance(result, dict):
+        MATCH_OUTCOMES.labels("ok").inc()
+        if result["matches"]:
+            TOP_STRENGTH.observe(result["matches"][0]["similarity"])
+    else:
+        MATCH_OUTCOMES.labels(json.loads(result.body)["error"]).inc()
+    log.info("match took %.0f ms", elapsed * 1000)
     return result
