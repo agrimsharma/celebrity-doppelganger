@@ -33,15 +33,16 @@ image = (
         "FaceAnalysis(name='buffalo_l', allowed_modules=['detection', 'recognition'], "
         "providers=['CPUExecutionProvider']).prepare(ctx_id=-1, det_size=(320, 320))\""
     )
-    .env({"INDEX_DIR": "/index", "MPLCONFIGDIR": "/tmp", "PYTHONPATH": "/root"})
+    # `modal volume put doppelganger-index data/deploy/index /` stores the files under /index
+    .env({"INDEX_DIR": "/vol/index", "MPLCONFIGDIR": "/tmp", "PYTHONPATH": "/root"})
     .add_local_dir(str(ROOT / "backend"), "/root/backend", ignore=["tests", "__pycache__", "Dockerfile"])
 )
 
 
 @app.function(
     image=image,
-    volumes={"/index": index},
-    cpu=1.0,
+    volumes={"/vol": index},
+    cpu=2.0,  # ~0.5 s server-side per match (detect + embed + search over 140K faces)
     memory=2048,
     scaledown_window=SCALEDOWN_S,
     max_containers=2,  # caps spend even under a traffic spike
