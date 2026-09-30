@@ -1,0 +1,12 @@
+# build contexts use backend/ (backend image) or frontend/ (its own .dockerignore); never ship data
+.git
+data
+reports
+notebooks
+docs
+infra
+scripts
+frontend/node_modules
+frontend/.next
+**/__pycache__
+**/.pytest_cache
