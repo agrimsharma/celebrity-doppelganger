@@ -15,8 +15,8 @@ best done when you don't need the machine for anything demanding.
   that says "Add Python to PATH")
 - 7-Zip installed (7-zip.org) — needed because normal Windows extraction can corrupt these files
 - At least **15GB of free disk space**
-- The 3 files that came with this doc: `build_manifest.py`, `embed_dataset_parallel.py`,
-  `requirements.txt`
+- The 3 files this doc refers to, all in this repo's `scripts/` folder: `build_manifest.py`,
+  `embed_dataset_parallel.py`, `requirements.txt`
 
 ## Step 1 — Set up a folder
 
