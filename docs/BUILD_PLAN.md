@@ -6,12 +6,17 @@ date as of 2026-09-06)
 
 ---
 
-## Pivot note (2026-09-06)
+## Pivot note (2026-09-06, updated same day — second pivot)
 
-Milestone 2 below (originally "Lambda backend") is rewritten to target **Kubernetes (EKS) +
-Terraform + Helm** instead of AWS Lambda — see [HANDOFF.md](./HANDOFF.md) §7 and
-[TECHNICAL_DESIGN.md](./TECHNICAL_DESIGN.md) §11 for the why and the design. Milestones 1, 3, 4,
-5 are unaffected by the pivot and still apply as written.
+Milestone 2 below (originally "Lambda backend") targets **Kubernetes + Terraform + Helm** instead
+of AWS Lambda — see [HANDOFF.md](./HANDOFF.md) §7 and [TECHNICAL_DESIGN.md](./TECHNICAL_DESIGN.md)
+§11 for the why and the design. **Cloud provider within that: GKE (Google Cloud), not EKS (AWS)**
+— switched the same day after cost research found AWS's account creation ties even its "Free
+Plan" into autopay, and that GKE's per-billing-account monthly credit fully offsets one zonal
+cluster's control-plane fee indefinitely (EKS has no equivalent — flat ~$0.10/hr always). See
+Technical Design §11's Pivot banner #2 for the full comparison including Azure/AKS, which was
+considered and passed over. Milestones 1, 3, 4, 5 are unaffected by either pivot and still apply
+as written.
 
 ## Where we stand
 
@@ -65,12 +70,12 @@ is known):**
 
 </details>
 
-### Current plan: EKS + Terraform + Helm
+### Current plan: GKE + Terraform + Helm
 
-Prerequisite (per HANDOFF.md §7, in progress as of this doc): AWS account + IAM user +
-programmatic access + AWS Budget alert (~$10-20/month), plus AWS CLI, Terraform, kubectl, and
-Helm installed locally, and a GitHub repo created and pushed (this project has no git history at
-all yet — that's step 0, not optional).
+Prerequisite (updated from HANDOFF.md §7's AWS-specific version): a **GCP account** + billing
+enabled + a **GCP budget alert** (~$10-20/month), plus `gcloud` CLI, Terraform, kubectl, and Helm
+installed locally, and a GitHub repo created and pushed (this project has no git history at all
+yet — that's step 0, not optional).
 
 **API contract (unchanged from the original plan — fixed so frontend work isn't blocked on this
 milestone):**
@@ -82,22 +87,24 @@ Error:    { "error": "no_face_detected" | "low_confidence" | "invalid_image" }
 This already matches what `scripts/local_api_server.py` implements — the port is about *where*
 this logic runs, not changing the contract.
 
-1. **Terraform: scaffold the EKS cluster** — VPC, subnets, an EKS control plane, a node group,
-   the OIDC provider/IRSA roles needed for pods to assume AWS permissions. Start here even before
+1. **Terraform: scaffold the GKE cluster** — VPC/subnet, a **zonal** GKE cluster (not regional —
+   the free-tier credit only applies to zonal/Autopilot, see Technical Design §11), a node pool,
+   and Workload Identity Federation for pods to assume GCP permissions. Start here even before
    the app container is finalized; the cluster and the containerized app can be developed in
    parallel once the API contract above is fixed.
 2. **Containerize** the matching logic (adapt `scripts/local_api_server.py` or rewrite in
    FastAPI — TBD, see Technical Design §11) into a Docker image bundling the model, consolidated
-   embeddings, manifest, and thumbnails. Push to **ECR**.
+   embeddings, manifest, and thumbnails. Push to **Artifact Registry**.
 3. **Helm chart**: `Deployment` (the container from step 2), `Service`, and an `Ingress` or
-   `LoadBalancer` Service for a public HTTPS endpoint. Decide Ingress controller (AWS Load
-   Balancer Controller is the common choice on EKS) at this step.
+   `LoadBalancer` Service for a public HTTPS endpoint. Decide Ingress controller (GKE's native
+   Ingress-to-Google-Cloud-Load-Balancer is the common choice) at this step.
 4. **Deploy via Helm** against the Terraform-provisioned cluster.
 5. **CORS** configured so the frontend's domain can call the endpoint from the browser.
 6. **Test end-to-end** with `curl`/Postman before wiring up the frontend, so frontend bugs and
    backend bugs don't get debugged simultaneously.
 7. **Cost discipline**: `terraform destroy` the cluster when not actively demoing/developing
-   against it, since (unlike the old Lambda plan) this doesn't scale to zero on its own — see
+   against it — the control-plane fee itself is credit-offset (see Technical Design §11), but the
+   node pool's VM cost is not, and this doesn't scale to zero on its own — see
    Technical Design §11's cost note. The budget alert from the prerequisite step is the backstop,
    not the primary control.
 
