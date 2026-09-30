@@ -1,16 +1,36 @@
 # Technical Design Doc: Celebrity Doppelganger Finder
 
-**Status:** Draft v2 — backend target pivoted, see banner below
+**Status:** Draft v3 — backend target pivoted twice, see banners below
 **Depends on:** [PRD.md](./PRD.md) (D1–D4, G3 in particular — G3's "$0 ongoing" goal is
-superseded by the pivot, see banner)
+superseded by the pivot, see banners)
 **Last updated:** 2026-09-06
 
 ---
 
-## Pivot banner (2026-09-06)
+## Pivot banner #2 (2026-09-06) — cloud provider: AWS/EKS → GCP/GKE
+
+**Superseding banner #1 below before EKS was ever built.** While researching AWS account setup,
+the user hit real friction: AWS's current account creation flow ties even the "Free Plan" into
+autopay/billing setup, not just card verification. Cost research done in this session found a
+better fit: **GKE gives a $74.40/month credit per billing account that fully offsets one zonal
+(or Autopilot) cluster's control-plane fee, indefinitely — not a time-boxed trial.** EKS's
+control plane, by contrast, is a flat ~$0.10/hr (~$73/month) with no free equivalent. GKE also
+literally matches the target JD's "EKS/GKE" wording (banner #1's rationale, unchanged). AKS
+(Azure) was also considered — its free-tier control plane is genuinely $0/hr — but wasn't chosen
+since it doesn't match the JD's literal wording as directly as GKE does; it's a reasonable
+fallback if GCP account setup turns out to have its own friction.
+
+**Everything below written under banner #1 (EKS/Terraform/Helm) should be read as
+EKS→GKE, ECR→Artifact Registry, IAM/OIDC/IRSA→GCP Workload Identity Federation, ALB Controller→
+GCE Ingress controller.** The Terraform/Helm/container-bundling *shape* of the design is
+unchanged — only the cloud provider underneath it is. §11 below has been updated in place to
+reflect this; nothing has actually been built yet under either version, so there's no rework
+cost from the switch.
+
+## Pivot banner #1 (2026-09-06, superseded by #2 above)
 
 **The Lambda backend described in §3–4 and §8 below was never built and is no longer the
-plan.** The backend target changed to **Kubernetes (EKS) + Terraform + Helm**, decided in order
+plan.** The backend target changed to **Kubernetes + Terraform + Helm**, decided in order
 to demonstrate exactly those skills for a specific target job (Sr. ML Platform Engineer @
 talabat/Delivery Hero, Dubai) — not because anything about the Lambda design was technically
 wrong. Full rationale lives in [HANDOFF.md](./HANDOFF.md) §7; the replacement design is in the
@@ -20,10 +40,11 @@ and §8 are kept below for historical record (they explain *why* the Lambda-cont
 looked attractive) but describe a path that is not being built.
 
 **Real consequence of the pivot, stated plainly:** PRD G3 ("$0 ongoing hosting cost") is no
-longer met. An EKS control plane costs ~$0.10/hr (~$73/month) regardless of traffic — nothing
-like Lambda's Always-Free tier. This is an accepted, deliberate tradeoff (K8s/Terraform/Helm
-resume signal for the target role matters more than $0 hosting for this project), not an
-oversight — see §11 for the cost mitigation plan (destroy-when-not-demoing, budget alert).
+longer fully met even under GKE (see banner #2) — a running worker-node VM still costs something
+on any cloud, since none of the providers' small perpetual-free compute tiers comfortably fit
+this workload's model+embeddings+thumbnails bundle. This is an accepted, deliberate tradeoff
+(K8s/Terraform/Helm resume signal for the target role matters more than $0 hosting for this
+project), not an oversight — see §11 for the cost mitigation plan.
 
 ## 1. Free-tier facts this design relies on (verified, not assumed)
 
@@ -201,33 +222,36 @@ brute-force cosine search at ~10ms. The frontend (§7) was also built and is run
 `scripts/local_api_server.py` as a local stand-in backend. Only the real backend (§11 below)
 remains.
 
-## 11. Backend design (CURRENT — Kubernetes + Terraform + Helm)
+## 11. Backend design (CURRENT — Kubernetes (GKE) + Terraform + Helm)
 
-Replaces §3–4 and §8. Same matching logic as `scripts/local_api_server.py` (detect → embed via
-insightface → brute-force cosine search over the 150,720-vector consolidated array → calibrated
-top-3 with name dedup), but packaged and deployed differently:
+Replaces §3–4 and §8. Updated under banner #2 (GCP, not AWS — see above). Same matching logic as
+`scripts/local_api_server.py` (detect → embed via insightface → brute-force cosine search over
+the 150,720-vector consolidated array → calibrated top-3 with name dedup), but packaged and
+deployed differently:
 
 - **Containerize** `local_api_server.py`'s logic (or a rewritten equivalent — e.g. FastAPI, still
   TBD) into a Docker image bundling the model weights, `embeddings.npy`, `manifest.csv`, and
   `thumbnails/`. Same bundling rationale as the old §3 (self-contained image, no separate data
   store to serve at request time) — only the runtime target changes, not this part of the
   reasoning.
-- **Infra: Terraform** provisions an **EKS cluster** (VPC, node group, IAM roles/OIDC provider for
-  IRSA, EKS control plane) — this *is* the resume-relevant deliverable, not an implementation
-  detail to minimize.
+- **Infra: Terraform** provisions a **GKE cluster** (VPC/subnet, node pool, Workload Identity
+  Federation for pod-level GCP permissions, the GKE control plane itself — using a **zonal**
+  cluster specifically, since that's what the free-tier credit in banner #2 applies to, not a
+  regional one) — this *is* the resume-relevant deliverable, not an implementation detail to
+  minimize.
 - **Deploy: Helm chart** wrapping a Kubernetes `Deployment` (the containerized matcher),
-  `Service`, and `Ingress` (or a `LoadBalancer` Service directly — AWS Load Balancer Controller
-  vs. a plain ELB is an open sub-decision at build time) to get a public HTTPS endpoint.
-- **Container registry: ECR** (same as the old Lambda plan would have used) for the built image.
-- **Cost reality (see Pivot banner above):** an EKS control plane runs ~$0.10/hr (~$73/month)
-  whether or not it's serving traffic — this is not a scale-to-zero design like Lambda was.
-  Mitigation the user is already applying: an AWS Budget alert (~$10–20/month, per HANDOFF.md
-  §7) as a safety net, and `terraform destroy` the cluster between demo sessions / interview
-  prep rather than leaving it running continuously. This tradeoff is intentional (see banner) —
-  don't try to re-optimize back toward $0 by reintroducing Lambda; that would defeat the purpose
-  of the pivot.
+  `Service`, and `Ingress` (GKE's native Ingress-to-Google-Cloud-Load-Balancer integration, or a
+  plain `LoadBalancer` Service — open sub-decision at build time) to get a public HTTPS endpoint.
+- **Container registry: Artifact Registry** (GCP's equivalent of ECR) for the built image.
+- **Cost reality (see Pivot banner #2 above):** the GKE control plane fee is offset to $0 by the
+  per-billing-account monthly credit **as long as this stays a single zonal/Autopilot cluster**
+  — running a second cluster, or switching to regional, would start incurring the $0.10/hr fee
+  for real. Worker-node VM cost is separate and not covered by that credit; still mitigate with
+  `terraform destroy` between demo sessions and a GCP budget alert (~$10–20/month), same
+  discipline as the original EKS plan called for.
 - **Not yet decided at time of writing** (resolve when this milestone actually starts): exact
   Ingress/LoadBalancer approach, whether to rewrite `local_api_server.py` in a proper framework
-  (FastAPI) or containerize it close to as-is, node group sizing/instance type, and whether
-  Karpenter or a fixed node group is used for autoscaling. None of these block starting the
+  (FastAPI) or containerize it close to as-is, node pool sizing/machine type, and whether GKE
+  Autopilot (less infra to manage, but less "I configured the node pool myself" resume detail) or
+  Standard mode with a manually-sized node pool is used. None of these block starting the
   Terraform scaffolding for the cluster itself.
