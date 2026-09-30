@@ -1,0 +1,43 @@
+name: Deploy to AKS
+
+# CD for the recording-session cluster. Inert unless the cluster exists: infra/session/up.sh sets
+# the repo variables below, down.sh removes them. Logs in with OIDC - no Azure secret is stored.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["backend/**", "frontend/**", "infra/helm/**"]
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-aks
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: vars.AKS_NAME != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Build images in ACR (remote, amd64)
+        run: |
+          TAG=${GITHUB_SHA::12}
+          az acr build -r "${{ vars.ACR_NAME }}" -t "doppelganger-backend:$TAG" -f backend/Dockerfile . --no-logs -o none
+          az acr build -r "${{ vars.ACR_NAME }}" -t "doppelganger-frontend:$TAG" frontend --no-logs -o none
+      - uses: azure/setup-helm@v4
+      - uses: azure/setup-kubectl@v4
+      - name: Roll out
+        run: |
+          TAG=${GITHUB_SHA::12}
+          az aks get-credentials -g "${{ vars.AKS_RG }}" -n "${{ vars.AKS_NAME }}" --overwrite-existing
+          helm upgrade doppelganger infra/helm/doppelganger -n doppelganger --reuse-values --set backend.image.tag=$TAG --set frontend.image.tag=$TAG --wait --timeout 15m
+          kubectl -n doppelganger rollout status deploy/doppelganger-frontend --timeout=5m
+          kubectl -n doppelganger rollout status deploy/doppelganger-backend --timeout=10m
