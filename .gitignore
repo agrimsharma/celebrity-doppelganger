@@ -18,6 +18,7 @@ frontend/next-env.d.ts
 # Generated / packaged artifacts (regenerable from scripts/ + data/)
 imdb_friend_package.zip
 reports/*.html
+reports/*.npy
 
 # Terraform (added when backend work starts)
 **/.terraform/
@@ -29,3 +30,4 @@ crash.log
 # OS / editor
 .DS_Store
 *.log
+.pytest_cache/

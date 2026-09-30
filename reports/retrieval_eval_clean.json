@@ -1,0 +1,28 @@
+{
+  "index_dir": "data/processed/consolidated_clean",
+  "n_faces": 139845,
+  "n_identities": 36310,
+  "leave_one_out": {
+    "n_queries": 2000,
+    "n_eligible_identities": 9304,
+    "top1_accuracy": 0.9865,
+    "top5_accuracy": 0.999,
+    "top10_accuracy": 0.9995,
+    "best_same_person_score_median": 0.7103375494480133,
+    "share_same_person_best_below_0.2": 0.0
+  },
+  "stranger_baseline": {
+    "n_queries": 2000,
+    "top1_score_percentiles": {
+      "1": 0.25476830691099167,
+      "5": 0.267192941904068,
+      "10": 0.27789217233657837,
+      "25": 0.29343120753765106,
+      "50": 0.3156746178865433,
+      "75": 0.3381175696849823,
+      "90": 0.3657095104455948,
+      "95": 0.39193504154682157,
+      "99": 0.6391955816745758
+    }
+  }
+}

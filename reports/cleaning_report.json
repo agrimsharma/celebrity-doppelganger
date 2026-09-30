@@ -1,0 +1,14 @@
+{
+  "input_rows": 150720,
+  "input_identities": 36950,
+  "dropped_junk_names": 65,
+  "dropped_centroid_outliers": 9815,
+  "dropped_disagreeing_pairs": 995,
+  "output_rows": 139845,
+  "output_identities": 36310,
+  "identities_with_1_photo": 27006,
+  "identities_with_2plus_photos": 9304,
+  "unverified_imdb_singletons": 3733,
+  "centroid_threshold": 0.3,
+  "pair_threshold": 0.2
+}
