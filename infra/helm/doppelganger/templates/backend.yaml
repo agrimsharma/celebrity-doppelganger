@@ -1,0 +1,135 @@
+{{- $idx := .Values.index }}
+{{- $download := ne $idx.source "hostPath" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dopp.fullname" . }}-backend
+  labels:
+    {{- include "dopp.labels" . | nindent 4 }}
+    {{- include "dopp.backendSelector" . | nindent 4 }}
+spec:
+  {{- if not .Values.backend.autoscaling.enabled }}
+  replicas: {{ .Values.backend.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "dopp.backendSelector" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "dopp.backendSelector" . | nindent 8 }}
+        {{- if .Values.serviceAccount.azureWorkloadIdentity }}
+        azure.workload.identity/use: "true"
+        {{- end }}
+      annotations:
+        checksum/api-key: {{ .Values.backend.apiKey | sha256sum }}
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+      {{- if $download }}
+      initContainers:
+        - name: fetch-index
+          {{- if eq $idx.source "azureBlob" }}
+          image: mcr.microsoft.com/azure-cli:latest
+          command: ["sh", "-c"]
+          # AZURE_CLIENT_ID / AZURE_TENANT_ID / AZURE_FEDERATED_TOKEN_FILE are injected by the
+          # workload identity webhook: the pod logs in as its managed identity, no secrets stored
+          args:
+            - >-
+              az login --service-principal -u "$AZURE_CLIENT_ID" -t "$AZURE_TENANT_ID"
+              --federated-token "$(cat "$AZURE_FEDERATED_TOKEN_FILE")" --allow-no-subscriptions --output none &&
+              az storage blob download-batch --auth-mode login --account-name {{ required "index.azureBlob.account" $idx.azureBlob.account }}
+              --source {{ $idx.azureBlob.container }} --destination /index --output none
+          env:
+            - {name: HOME, value: /tmp}
+            - {name: AZURE_CONFIG_DIR, value: /tmp/.azure}
+          {{- else if eq $idx.source "gcs" }}
+          image: gcr.io/google.com/cloudsdktool/google-cloud-cli:slim
+          command: ["gcloud", "storage", "rsync", "--recursive",
+                    "gs://{{ required "index.gcs.bucket" $idx.gcs.bucket }}/{{ $idx.gcs.prefix }}", "/index"]
+          env:
+            - {name: CLOUDSDK_CONFIG, value: /tmp/gcloud}
+          {{- else if eq $idx.source "hf" }}
+          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
+          command: ["python", "-c",
+                    "import os; from huggingface_hub import snapshot_download; snapshot_download(os.environ['INDEX_REPO'], repo_type='dataset', local_dir='/index', token=os.environ.get('HF_TOKEN'))"]
+          env:
+            - {name: INDEX_REPO, value: {{ required "index.hf.repo" $idx.hf.repo | quote }}}
+            - {name: HOME, value: /tmp}
+            {{- if $idx.hf.tokenSecret }}
+            - name: HF_TOKEN
+              valueFrom: {secretKeyRef: {name: {{ $idx.hf.tokenSecret }}, key: HF_TOKEN}}
+            {{- end }}
+          {{- else }}
+          {{- fail (printf "unknown index.source %q" $idx.source) }}
+          {{- end }}
+          volumeMounts:
+            - {name: index, mountPath: /index}
+            - {name: tmp, mountPath: /tmp}
+          resources:
+            requests: {cpu: 250m, memory: 256Mi}
+      {{- end }}
+      containers:
+        - name: backend
+          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          ports:
+            - {name: http, containerPort: 8787}
+          env:
+            - {name: INDEX_DIR, value: /index}
+            - {name: MPLCONFIGDIR, value: /tmp}  # read-only root fs; insightface imports matplotlib
+            {{- if .Values.backend.apiKey }}
+            - name: API_KEY
+              valueFrom: {secretKeyRef: {name: {{ include "dopp.fullname" . }}-api-key, key: API_KEY}}
+            {{- end }}
+          # model + index load takes a while on a small node; don't let liveness kill it
+          startupProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          volumeMounts:
+            - {name: index, mountPath: /index, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: index
+          {{- if $download }}
+          emptyDir: {sizeLimit: {{ $idx.sizeLimit }}}
+          {{- else }}
+          hostPath: {path: {{ $idx.hostPath }}, type: Directory}
+          {{- end }}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "dopp.fullname" . }}-backend
+  labels:
+    {{- include "dopp.labels" . | nindent 4 }}
+    {{- include "dopp.backendSelector" . | nindent 4 }}
+  {{- if and .Values.ingress.enabled (eq .Values.ingress.className "gce") (not .Values.frontend.enabled) }}
+  annotations:
+    cloud.google.com/neg: '{"ingress": true}'
+    cloud.google.com/backend-config: '{"default": "{{ include "dopp.fullname" . }}"}'
+  {{- end }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "dopp.backendSelector" . | nindent 4 }}
+  ports:
+    - {name: http, port: 80, targetPort: http}

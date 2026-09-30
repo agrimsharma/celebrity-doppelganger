@@ -21,24 +21,25 @@ echo "==> 1/4 index -> gs://$BUCKET/index"
 [ -d "$ROOT/data/deploy/index" ] || python "$ROOT/scripts/package_index.py"
 gcloud storage rsync --recursive "$ROOT/data/deploy/index" "gs://$BUCKET/index"
 
-echo "==> 2/4 image -> $IMAGE:$TAG"
+echo "==> 2/4 images -> $IMAGE:$TAG, ${IMAGE%/*}/frontend:$TAG"
 gcloud auth configure-docker "$REGISTRY_HOST" --quiet
 docker build --platform linux/amd64 -f "$ROOT/backend/Dockerfile" -t "$IMAGE:$TAG" "$ROOT"
-docker push "$IMAGE:$TAG"
+docker build --platform linux/amd64 -t "${IMAGE%/*}/frontend:$TAG" "$ROOT/frontend"
+docker push "$IMAGE:$TAG" && docker push "${IMAGE%/*}/frontend:$TAG"
 
 echo "==> 3/4 kubectl credentials"
 eval "$(tf get_credentials)"
 
 echo "==> 4/4 helm upgrade"
-helm upgrade --install doppelganger-backend "$ROOT/infra/helm/doppelganger-backend" \
-  --namespace "$NAMESPACE" --create-namespace \
-  --set image.repository="$IMAGE" --set image.tag="$TAG" \
-  --set index.bucket="$BUCKET" \
-  --set serviceAccount.gcpServiceAccount="$GSA" \
-  --set ingress.staticIpName="$IP_NAME" \
-  --set apiKey="$API_KEY" \
+helm upgrade --install doppelganger "$ROOT/infra/helm/doppelganger" \
+  --namespace "$NAMESPACE" --create-namespace -f "$ROOT/infra/helm/doppelganger/values-gke.yaml" \
+  --set backend.image.repository="$IMAGE" --set backend.image.tag="$TAG" \
+  --set frontend.image.repository="${IMAGE%/*}/frontend" --set frontend.image.tag="$TAG" \
+  --set index.gcs.bucket="$BUCKET" \
+  --set serviceAccount.annotations."iam\.gke\.io/gcp-service-account"="$GSA" \
+  --set ingress.gce.staticIpName="$IP_NAME" \
+  --set backend.apiKey="$API_KEY" \
   --wait --timeout 10m
 
 echo
-echo "Backend: http://$(tf ingress_ip)/match  (load balancer can take ~10 min to go live)"
-echo "Vercel env: BACKEND_URL=http://$(tf ingress_ip)/match  BACKEND_API_KEY=<same API_KEY>"
+echo "App: http://$(tf ingress_ip)/  (the load balancer can take ~10 min to go live)"

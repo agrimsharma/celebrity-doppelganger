@@ -1,0 +1,13 @@
+{{- if .Values.monitoring.serviceMonitor }}
+# picked up by the Grafana sidecar (kube-prometheus-stack, label grafana_dashboard)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dopp.fullname" . }}-dashboard
+  labels:
+    {{- include "dopp.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  doppelganger.json: |-
+{{ .Files.Get "dashboards/doppelganger.json" | indent 4 }}
+{{- end }}

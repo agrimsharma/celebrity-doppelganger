@@ -1,0 +1,61 @@
+{{- if .Values.ingress.enabled }}
+{{- $gce := eq .Values.ingress.className "gce" }}
+{{- $svc := ternary (printf "%s-frontend" (include "dopp.fullname" .)) (printf "%s-backend" (include "dopp.fullname" .)) .Values.frontend.enabled }}
+{{- if and $gce .Values.ingress.tls.enabled .Values.ingress.host }}
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: {{ include "dopp.fullname" . }}
+spec:
+  domains:
+    - {{ .Values.ingress.host }}
+---
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "dopp.fullname" . }}
+  labels:
+    {{- include "dopp.labels" . | nindent 4 }}
+  annotations:
+    {{- if $gce }}
+    kubernetes.io/ingress.global-static-ip-name: {{ .Values.ingress.gce.staticIpName | quote }}
+    {{- if and .Values.ingress.tls.enabled .Values.ingress.host }}
+    networking.gke.io/managed-certificates: {{ include "dopp.fullname" . }}
+    {{- end }}
+    {{- else }}
+    # selfie uploads are base64 JSON (the frontend downsizes to 1024px, so ~0.5 MB)
+    nginx.ingress.kubernetes.io/proxy-body-size: 12m
+    {{- if .Values.ingress.tls.enabled }}
+    cert-manager.io/cluster-issuer: {{ .Values.ingress.tls.clusterIssuer }}
+    {{- end }}
+    {{- end }}
+spec:
+  {{- if not $gce }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  {{- if and .Values.ingress.tls.enabled (not $gce) .Values.ingress.host }}
+  tls:
+    - hosts: [{{ .Values.ingress.host | quote }}]
+      secretName: {{ include "dopp.fullname" . }}-tls
+  {{- end }}
+  {{- if $gce }}
+  defaultBackend:
+    service:
+      name: {{ $svc }}
+      port: {number: 80}
+  {{- else }}
+  rules:
+    - {{- if .Values.ingress.host }}
+      host: {{ .Values.ingress.host | quote }}
+      {{- end }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $svc }}
+                port: {number: 80}
+  {{- end }}
+{{- end }}

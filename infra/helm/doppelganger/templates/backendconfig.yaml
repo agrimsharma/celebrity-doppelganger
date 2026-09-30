@@ -1,0 +1,16 @@
+{{- if and .Values.ingress.enabled (eq .Values.ingress.className "gce") (not .Values.frontend.enabled) }}
+# GKE only: health check + timeout for the Google Cloud Load Balancer when the backend is exposed directly
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: {{ include "dopp.fullname" . }}
+  labels:
+    {{- include "dopp.labels" . | nindent 4 }}
+spec:
+  timeoutSec: 30
+  healthCheck:
+    type: HTTP
+    requestPath: /readyz
+    port: 8787
+    checkIntervalSec: 15
+{{- end }}

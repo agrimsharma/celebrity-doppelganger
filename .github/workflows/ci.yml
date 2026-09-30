@@ -46,11 +46,14 @@ jobs:
           terraform init -backend=false -input=false
           terraform validate
       - uses: azure/setup-helm@v4
-      - name: helm lint + render + schema check
+      - name: helm lint + render + schema check (kind, AKS, GKE values)
         run: |
-          CHART=infra/helm/doppelganger-backend
-          helm lint "$CHART" --set apiKey=ci --set ingress.host=example.com
-          helm template ci "$CHART" --set apiKey=ci --set ingress.host=example.com > rendered.yaml
+          CHART=infra/helm/doppelganger
           curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz | tar xz
-          # BackendConfig / ManagedCertificate are GKE CRDs without public schemas
-          ./kubeconform -summary -ignore-missing-schemas rendered.yaml
+          for target in kind aks gke; do
+            args="-f $CHART/values-$target.yaml --set backend.apiKey=ci --set ingress.host=example.com --set index.azureBlob.account=ci --set index.gcs.bucket=ci"
+            helm lint "$CHART" $args
+            helm template ci "$CHART" $args > rendered-$target.yaml
+            # ServiceMonitor / BackendConfig / ManagedCertificate are CRDs without public schemas
+            ./kubeconform -summary -ignore-missing-schemas rendered-$target.yaml
+          done

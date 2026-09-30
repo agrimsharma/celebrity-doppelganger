@@ -1,0 +1,69 @@
+# One chart for every target: local kind, AKS, GKE. Pick the index source, identity and ingress
+# for the environment; see values-kind.yaml / values-aks.yaml / values-gke.yaml.
+
+backend:
+  image:
+    repository: doppelganger-backend
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  # shared secret the frontend sends as X-API-Key (stored as a Secret); empty = no auth
+  apiKey: ""
+  resources:
+    requests: {cpu: 500m, memory: 1536Mi}
+    limits: {memory: 2560Mi}
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 60
+
+frontend:
+  enabled: true
+  image:
+    repository: doppelganger-frontend
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {memory: 512Mi}
+
+# Where the face index (embeddings, manifest, packed thumbnails) comes from. It is never baked
+# into an image: IMDB-WIKI is academic-use only.
+index:
+  source: hostPath          # hostPath | azureBlob | gcs | hf
+  hostPath: /mnt/dopp-index # kind: mounted into the node via kind extraMounts
+  sizeLimit: 2Gi            # emptyDir size for the download sources
+  azureBlob:                # AKS: pulled with the pod's workload identity (no keys)
+    account: ""
+    container: index
+  gcs:                      # GKE: pulled with the pod's workload identity
+    bucket: ""
+    prefix: index
+  hf:                       # any cluster: private Hugging Face dataset + read token
+    repo: ""
+    tokenSecret: ""         # name of a Secret with key HF_TOKEN
+
+serviceAccount:
+  create: true
+  name: doppelganger-backend
+  # GKE: iam.gke.io/gcp-service-account: <gsa-email>
+  # AKS: azure.workload.identity/client-id: <managed identity client id>
+  annotations: {}
+  azureWorkloadIdentity: false   # AKS: label pods so the webhook injects the federated token
+
+ingress:
+  enabled: true
+  className: nginx          # nginx (kind, AKS) | gce (GKE)
+  host: ""                  # e.g. doppelganger.<ingress-ip>.sslip.io; empty = any host
+  tls:
+    enabled: false
+    clusterIssuer: letsencrypt   # cert-manager ClusterIssuer (nginx); GKE uses a ManagedCertificate
+  gce:
+    staticIpName: ""
+
+monitoring:
+  serviceMonitor: false     # needs the Prometheus operator (kube-prometheus-stack)
+  labels:
+    release: kube-prometheus-stack
