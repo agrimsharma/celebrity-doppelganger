@@ -1,33 +1,31 @@
-# Going live for free (Hugging Face + Vercel, no card anywhere)
+# Going live for free (Modal + Vercel, no card anywhere)
 
-**Cost: ₹0, permanently.** Neither service has a card on file, so nothing can ever be charged.
-The backend sleeps after ~48 h without visitors; the page wakes it and shows a "waking up" status.
+**Cost: ₹0.** Modal's Starter plan gives $30/month of compute credit with no card on file; the
+backend scales to zero when idle, so a recruiter visit costs a fraction of a cent. Vercel's Hobby
+plan is free. If Modal's credit ever ran out, the backend would simply stop until next month.
 
-## 1. Backend → Hugging Face Space (~15 min)
+The first request after an idle period starts a container (~15-30 s); the page shows
+"Waking up the model" meanwhile.
 
-1. Create a free account at huggingface.co.
-2. Settings → Access Tokens → **New token**, type **Write** → then, on this Mac:
+## 1. Backend → Modal (~15 min)
+
+1. modal.com → sign up with **GitHub** (`agrimsharma`) → stay on **Starter**.
+2. Connect this Mac (opens the browser):
    ```bash
-   python3 -m pip install --user -U huggingface_hub
-   hf auth login          # paste the WRITE token into its prompt (older versions: huggingface-cli login)
+   ~/Downloads/Projects/.hf-venv/bin/modal token new
    ```
-3. Settings → Access Tokens → **New token**, type **Fine-grained**, give it *read* access to your
-   repos. This one lives inside the Space, so it must not be the write token.
-4. Publish (index ~1 GB upload + the Space):
+3. Upload the face index to a private Modal Volume (~1 GB) and deploy:
    ```bash
    python3 scripts/package_index.py      # already done if data/deploy/index/thumbnails.bin exists
-   HF_READ_TOKEN=<fine-grained token> BACKEND_API_KEY=$(openssl rand -hex 16) python3 scripts/publish_hf.py
+   modal volume create doppelganger-index
+   modal volume put doppelganger-index data/deploy/index /
+   modal deploy deploy/modal_app.py
    ```
-   Note the `BACKEND_API_KEY` value it printed; Vercel needs the same one.
-5. Wait for the Space build (~10 min): `https://<you>-doppelganger-api.hf.space/readyz` → `{"ready": true, ...}`
+4. Check `https://<workspace>--doppelganger-api.modal.run/readyz` → `{"ready": true, ...}`
 
 ## 2. Frontend → Vercel (~5 min)
 
-1. vercel.com → **Continue with GitHub** (the `agrimsharma` account) → Hobby plan (free).
+1. vercel.com → **Continue with GitHub** (`agrimsharma`) → Hobby plan (free).
 2. **Add New → Project** → import `celebrity-doppelganger` → **Root Directory: `frontend`**.
-3. Environment variables:
-   | Name | Value |
-   |---|---|
-   | `BACKEND_URL` | `https://<you>-doppelganger-api.hf.space/match` |
-   | `BACKEND_API_KEY` | the value from step 1.4 |
+3. Environment variable `BACKEND_URL` = `https://<workspace>--doppelganger-api.modal.run/match`
 4. **Deploy** → your permanent link is `https://<project>.vercel.app`.
