@@ -1,0 +1,14 @@
+# health check + timeout for the Google Cloud Load Balancer created by the Ingress
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: {{ include "backend.fullname" . }}
+  labels:
+    {{- include "backend.labels" . | nindent 4 }}
+spec:
+  timeoutSec: 30
+  healthCheck:
+    type: HTTP
+    requestPath: /readyz
+    port: {{ .Values.service.targetPort }}
+    checkIntervalSec: 15
