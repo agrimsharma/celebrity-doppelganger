@@ -1,0 +1,56 @@
+{
+  "n_images": 4375,
+  "n_faces_used": 4252,
+  "n_skipped_no_confident_face": 123,
+  "real_faces_top1_percentiles": {
+    "5": 0.24737,
+    "25": 0.26735,
+    "50": 0.28382,
+    "75": 0.30441,
+    "95": 0.34216
+  },
+  "previous_in_domain_null_percentiles": {
+    "5": 0.26851,
+    "25": 0.29339,
+    "50": 0.31313,
+    "75": 0.33746,
+    "95": 0.39233
+  },
+  "test_selfies": [
+    {
+      "file": "profile_19.jpg",
+      "raw_top1": 0.2931,
+      "raw_top1_at_256px": 0.3033,
+      "old_strength": 0.247,
+      "new_strength": 0.624
+    },
+    {
+      "file": "profile_22.jpg",
+      "raw_top1": 0.2515,
+      "raw_top1_at_256px": 0.2497,
+      "old_strength": 0.009,
+      "new_strength": 0.075
+    },
+    {
+      "file": "profile_23.jpg",
+      "raw_top1": 0.2778,
+      "raw_top1_at_256px": 0.278,
+      "old_strength": 0.107,
+      "new_strength": 0.409
+    },
+    {
+      "file": "profile_38.jpg",
+      "raw_top1": 0.3046,
+      "raw_top1_at_256px": 0.313,
+      "old_strength": 0.387,
+      "new_strength": 0.751
+    },
+    {
+      "file": "profile_39.jpg",
+      "raw_top1": 0.2789,
+      "raw_top1_at_256px": 0.2752,
+      "old_strength": 0.115,
+      "new_strength": 0.428
+    }
+  ]
+}
