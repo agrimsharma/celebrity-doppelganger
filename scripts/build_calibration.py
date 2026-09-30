@@ -1,6 +1,8 @@
 """
-Build backend/calibration.json: the distribution of top-1 match scores that a person who is
-NOT in the index gets (leave-identity-out queries - see evaluate_retrieval.py).
+In-domain stranger baseline: the distribution of top-1 match scores for leave-identity-out
+queries from the index itself (celebrity crops). Kept as an analysis; the SERVED calibration
+(backend/calibration.json) comes from scripts/calibrate_real_faces.py, because real uploads of
+ordinary people score lower than these in-domain queries.
 
 Why: the old calibration (local_api_server.py) mapped raw cosine scores through anchors from
 10 hand-picked lookalike pairs, so ordinary chance-level best matches (~0.30 over ~140K faces)
@@ -19,7 +21,7 @@ import pandas as pd
 from evaluate_retrieval import HERE, load_index, stranger_baseline
 
 DEFAULT_INDEX = os.path.join(HERE, "..", "data", "processed", "consolidated_clean")
-OUT = os.path.join(HERE, "..", "backend", "calibration.json")
+OUT = os.path.join(HERE, "..", "reports", "calibration_in_domain.json")
 
 
 def main():

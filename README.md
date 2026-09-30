@@ -1,6 +1,6 @@
 # Celebrity Doppelganger
 
-Upload a selfie and find your three closest celebrity lookalikes out of **139,845 face photos of 36,310 celebrities**.
+Upload a photo or take a live selfie, and find your three closest celebrity lookalikes out of **139,845 face photos of 36,310 celebrities**.
 
 The app detects the face, embeds it with ArcFace, and runs a cosine search over the index. The result is shown as a match strength calibrated against how well people who *aren't* celebrities match.
 
@@ -36,10 +36,17 @@ The two rows bracket the true accuracy:
 - **"Before" is a lower bound.** About 10% of those queries are mislabeled photos, which can't retrieve their "own" name.
 - **"After" is an upper bound.** The cleanup removed photos that disagreed with their identity, which also removes hard-but-correct queries.
 
-**Score calibration** (`scripts/build_calibration.py`):
-- The best match for someone who isn't in the index scores a raw cosine of **0.31 at the median**, 0.39 at the 95th percentile.
-- The earlier fixed mapping displayed these ordinary scores as "45–75% similar". The app now shows **match strength**: the percentile of your best score among 5,000 such stranger queries.
-- So "80%" means your match is closer than 80% of people's.
+**Score calibration** (`scripts/calibrate_real_faces.py`): match strength is the percentile of your best score among the best scores of **4,252 ordinary people** (FFHQ Flickr portraits, not celebrities), run through the same detection and embedding pipeline.
+
+| Baseline for "a typical best match" | p5 | median | p95 |
+|---|---|---|---|
+| Ordinary people (FFHQ), **served** | 0.247 | 0.284 | 0.342 |
+| Other celebrity crops from the index (`build_calibration.py`) | 0.269 | 0.313 | 0.392 |
+
+Why it changed twice:
+- The first version mapped raw scores through 10 hand-picked lookalike pairs, so chance-level matches showed as "45–75% similar".
+- Calibrating against other celebrity crops overcorrected. Real uploads score lower than in-domain queries, so the 5 test selfies showed only 1–39%.
+- Against ordinary people they score 8–75%, averaging 46%, which is what an honest calibration should give random people. Resolution isn't the cause: the same photo scores within 0.01 at 256 px and at 1024 px.
 
 **Latency:**
 - Search: ~24 ms over 139,845 faces with brute-force numpy on CPU. At this size FAISS isn't needed.
@@ -61,7 +68,8 @@ To rebuild the index artifacts from the embeddings:
 ```bash
 python scripts/clean_label_noise.py        # -> data/processed/consolidated_clean/
 python scripts/evaluate_retrieval.py --index data/processed/consolidated_clean
-cd scripts && python build_calibration.py  # -> backend/calibration.json
+docker run --rm -v "$PWD:/repo" -w /repo -e MPLCONFIGDIR=/tmp doppelganger-backend \
+  python scripts/calibrate_real_faces.py --images data/raw/ffhq/images   # -> backend/calibration.json
 ```
 
 Tests (no model or dataset needed):
@@ -93,6 +101,8 @@ Then set `BACKEND_URL` and `BACKEND_API_KEY` in the Vercel project, as printed a
 - **Uploads:** decoded and embedded in memory only. Nothing is written to disk or logged, and the embedding is discarded after the request.
 - **Dataset:** [IMDB-WIKI](https://data.vision.ee.ethz.ch/cvl/rrothe/imdb-wiki/) is licensed for **academic research only**. That's why the dataset, embeddings and thumbnails are gitignored, never baked into the image, and served from a private bucket.
 - **Scope:** this is a non-commercial portfolio demo.
+- **Calibration faces:** [FFHQ](https://github.com/NVlabs/ffhq-dataset) (NVIDIA, CC BY-NC-SA 4.0), used only to compute score percentiles. No FFHQ images are stored in the repo or the deployment.
+- **Live selfie:** the camera stream stays in the browser. A frame is captured only when you press "Take photo", and the camera is released straight away.
 
 ## Repo layout
 
