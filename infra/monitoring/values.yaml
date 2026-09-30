@@ -1,0 +1,28 @@
+# kube-prometheus-stack sized for a laptop (kind) or 2 small AKS nodes.
+alertmanager:
+  enabled: false
+prometheus:
+  prometheusSpec:
+    retention: 2d
+    resources:
+      requests: {cpu: 100m, memory: 400Mi}
+      limits: {memory: 1Gi}
+    # pick up ServiceMonitors from every namespace/release, not just this chart's
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+grafana:
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard      # app charts ship dashboards as ConfigMaps with this label
+      searchNamespace: ALL
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+# control-plane components aren't scrapeable on kind/AKS - skip the noise
+kubeEtcd: {enabled: false}
+kubeControllerManager: {enabled: false}
+kubeScheduler: {enabled: false}
+kubeProxy: {enabled: false}

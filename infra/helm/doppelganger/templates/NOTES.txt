@@ -1,0 +1,9 @@
+Doppelganger deployed as release {{ .Release.Name }} in namespace {{ .Release.Namespace }}
+(index source: {{ .Values.index.source }}).
+
+Watch the backend start (index download + model load can take a couple of minutes):
+  kubectl -n {{ .Release.Namespace }} get pods -w
+{{- if .Values.ingress.enabled }}
+
+Open: {{ if .Values.ingress.tls.enabled }}https{{ else }}http{{ end }}://{{ .Values.ingress.host | default "<ingress address>" }}
+{{- end }}

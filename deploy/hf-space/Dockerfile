@@ -5,7 +5,7 @@
 FROM python:3.11-slim AS build
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential && rm -rf /var/lib/apt/lists/*
 COPY backend/requirements.txt .
-RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt huggingface_hub
+RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
 
 FROM python:3.11-slim
 # libxcb1/libgl1: insightface depends on the GUI opencv-python build, which links them

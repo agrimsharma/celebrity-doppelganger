@@ -1,0 +1,63 @@
+{{- if .Values.frontend.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dopp.fullname" . }}-frontend
+  labels:
+    {{- include "dopp.labels" . | nindent 4 }}
+    {{- include "dopp.frontendSelector" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.frontend.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "dopp.frontendSelector" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "dopp.frontendSelector" . | nindent 8 }}
+      annotations:
+        checksum/api-key: {{ .Values.backend.apiKey | sha256sum }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: frontend
+          image: "{{ .Values.frontend.image.repository }}:{{ .Values.frontend.image.tag }}"
+          imagePullPolicy: {{ .Values.frontend.image.pullPolicy }}
+          ports:
+            - {name: http, containerPort: 3000}
+          env:
+            # the backend is cluster-internal: only the frontend's server-side proxy reaches it
+            - {name: BACKEND_URL, value: "http://{{ include "dopp.fullname" . }}-backend/match"}
+            {{- if .Values.backend.apiKey }}
+            - name: BACKEND_API_KEY
+              valueFrom: {secretKeyRef: {name: {{ include "dopp.fullname" . }}-api-key, key: API_KEY}}
+            {{- end }}
+          readinessProbe:
+            httpGet: {path: /, port: http}
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.frontend.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "dopp.fullname" . }}-frontend
+  labels:
+    {{- include "dopp.labels" . | nindent 4 }}
+    {{- include "dopp.frontendSelector" . | nindent 4 }}
+  {{- if and .Values.ingress.enabled (eq .Values.ingress.className "gce") }}
+  annotations:
+    cloud.google.com/neg: '{"ingress": true}'
+  {{- end }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "dopp.frontendSelector" . | nindent 4 }}
+  ports:
+    - {name: http, port: 80, targetPort: http}
+{{- end }}

@@ -1,0 +1,17 @@
+{{- if .Values.monitoring.serviceMonitor }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "dopp.fullname" . }}-backend
+  labels:
+    {{- include "dopp.labels" . | nindent 4 }}
+    {{- toYaml .Values.monitoring.labels | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "dopp.backendSelector" . | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics/
+      interval: 15s
+{{- end }}

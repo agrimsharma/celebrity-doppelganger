@@ -1,0 +1,10 @@
+# GKE: images from Artifact Registry, index from GCS via workload identity, GCE Ingress + static IP.
+# scripts/deploy.sh fills in the repositories, bucket, service account and static IP name.
+index:
+  source: gcs
+ingress:
+  className: gce
+backend:
+  image: {pullPolicy: Always}
+frontend:
+  image: {pullPolicy: Always}
