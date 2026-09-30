@@ -39,12 +39,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
-      - name: terraform fmt + validate
-        working-directory: infra/terraform
+      - name: terraform fmt + validate (GKE and AKS)
         run: |
-          terraform fmt -check -recursive
-          terraform init -backend=false -input=false
-          terraform validate
+          for dir in infra/terraform infra/azure; do
+            terraform -chdir=$dir fmt -check -recursive
+            terraform -chdir=$dir init -backend=false -input=false
+            terraform -chdir=$dir validate
+          done
       - uses: azure/setup-helm@v4
       - name: helm lint + render + schema check (kind, AKS, GKE values)
         run: |
