@@ -33,7 +33,7 @@ cost from the switch.
 plan.** The backend target changed to **Kubernetes + Terraform + Helm**, decided in order
 to demonstrate exactly those skills for a specific target job (Sr. ML Platform Engineer @
 talabat/Delivery Hero, Dubai) — not because anything about the Lambda design was technically
-wrong. Full rationale lives in [HANDOFF.md](./HANDOFF.md) §7; the replacement design is in the
+wrong. Full rationale lives in the project decision log (kept private) §7; the replacement design is in the
 new §11 below. **§1–2 and §5–7 (free-tier research, embedding sizing, upload handling, batch
 pipeline outcome, frontend choice) are unaffected by the pivot and still apply as-is.** §3, §4,
 and §8 are kept below for historical record (they explain *why* the Lambda-container design
@@ -216,7 +216,7 @@ itself works and produces results that feel right, entirely locally:
    "doppelgangers," or just same-demographic near-misses?). Only once this is satisfying does the
    AWS/Lambda/frontend work in §3–8 start.
 
-**Status: this phase is done.** Matching quality was validated locally (see §6, and HANDOFF.md
+**Status: this phase is done.** Matching quality was validated locally (see §6, and the decision log
 §2–3) — 150,720 cleaned embeddings after the duplicate-image fix, calibrated similarity scoring,
 brute-force cosine search at ~10ms. The frontend (§7) was also built and is running against
 `scripts/local_api_server.py` as a local stand-in backend. Only the real backend (§11 below)
