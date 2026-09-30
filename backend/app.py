@@ -1,0 +1,142 @@
+"""
+Matching backend: detect -> embed (ArcFace) -> search -> calibrate. Replaces the stdlib
+dev server (scripts/local_api_server.py) with the same request/response contract, plus the
+things a deployed service needs: health/readiness probes, an upload size limit, env-driven
+paths, and distinct error codes.
+
+Privacy: uploads are decoded and embedded in memory only - nothing is written to disk or
+logged, and the embedding is discarded after the request.
+
+Run:  uvicorn backend.app:app --port 8787
+"""
+import base64
+import binascii
+import logging
+import os
+import time
+from contextlib import asynccontextmanager
+
+import numpy as np
+from fastapi import FastAPI, Request
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import JSONResponse
+
+from backend.matcher import DEFAULT_CALIBRATION, Calibration, Index
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.join(HERE, "..")
+INDEX_DIR = os.environ.get("INDEX_DIR", os.path.join(REPO, "data", "processed", "consolidated_clean"))
+THUMB_DIR = os.environ.get("THUMB_DIR", os.path.join(REPO, "data", "processed", "consolidated", "thumbnails"))
+CALIBRATION_PATH = os.environ.get("CALIBRATION_PATH", DEFAULT_CALIBRATION)
+MIN_DET_SCORE = float(os.environ.get("MIN_DET_SCORE", "0.75"))
+MAX_IMAGE_BYTES = int(os.environ.get("MAX_IMAGE_BYTES", str(8 * 1024 * 1024)))
+# shared secret between the Next.js proxy and this service; unset = no auth (local dev)
+API_KEY = os.environ.get("API_KEY")
+TOP_K = 3
+
+log = logging.getLogger("doppelganger")
+state = {"index": None, "embedder": None}
+
+
+class InsightFaceEmbedder:
+    """SCRFD detection + ArcFace w600k_r50 (insightface buffalo_l), CPU."""
+
+    def __init__(self):
+        from insightface.app import FaceAnalysis
+
+        self.app = FaceAnalysis(name="buffalo_l", allowed_modules=["detection", "recognition"],
+                                providers=["CPUExecutionProvider"])
+        self.app.prepare(ctx_id=0, det_size=(320, 320))
+
+    def best_face(self, img):
+        """(normed embedding, detection score) of the most confident face, or None."""
+        faces = self.app.get(img)
+        if not faces:
+            return None
+        face = max(faces, key=lambda f: f.det_score)
+        return face.normed_embedding.astype(np.float32), float(face.det_score)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if state["index"] is None:
+        state["index"] = Index.load(INDEX_DIR, THUMB_DIR, Calibration.load(CALIBRATION_PATH))
+        log.warning("loaded index: %d faces from %s", len(state["index"]), INDEX_DIR)
+    if state["embedder"] is None:
+        state["embedder"] = InsightFaceEmbedder()
+    yield
+
+
+app = FastAPI(title="Celebrity Doppelganger API", version="1.0.0", lifespan=lifespan)
+
+
+def error(code: str, status: int = 200):
+    # 200 for "your photo didn't work" outcomes keeps the existing frontend contract;
+    # real client/server faults get 4xx/5xx
+    return JSONResponse({"error": code}, status_code=status)
+
+
+def decode_image(data_uri: str):
+    import cv2
+
+    if not isinstance(data_uri, str) or "," not in data_uri:
+        return None
+    try:
+        raw = base64.b64decode(data_uri.split(",", 1)[1], validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    if len(raw) > MAX_IMAGE_BYTES:
+        raise OverflowError
+    return cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_COLOR)
+
+
+def match_image(data_uri: str):
+    try:
+        img = decode_image(data_uri)
+    except OverflowError:
+        return error("image_too_large", 413)
+    if img is None:
+        return error("invalid_image", 400)
+
+    face = state["embedder"].best_face(img)
+    if face is None:
+        return error("no_face_detected")
+    embedding, det_score = face
+    if det_score < MIN_DET_SCORE:
+        return error("low_confidence")
+    return {"matches": state["index"].top_k(embedding, k=TOP_K)}
+
+
+@app.get("/healthz")
+def healthz():
+    return {"status": "ok"}
+
+
+@app.get("/readyz")
+def readyz():
+    ready = state["index"] is not None and state["embedder"] is not None
+    body = {"ready": ready, "index_faces": len(state["index"]) if state["index"] else 0}
+    return JSONResponse(body, status_code=200 if ready else 503)
+
+
+@app.post("/match")
+async def match(request: Request):
+    if API_KEY and request.headers.get("x-api-key") != API_KEY:
+        return error("unauthorized", 401)
+    # base64 inflates by 4/3; reject oversized bodies before reading them into memory
+    length = int(request.headers.get("content-length") or 0)
+    if length > MAX_IMAGE_BYTES * 4 // 3 + 1024:
+        return error("image_too_large", 413)
+    try:
+        body = await request.json()
+    except ValueError:
+        return error("invalid_image", 400)
+
+    t0 = time.perf_counter()
+    try:
+        result = await run_in_threadpool(match_image, body.get("image") if isinstance(body, dict) else None)
+    except Exception:
+        log.exception("match failed")  # logs the traceback, never the image
+        return error("server_error", 500)
+    log.info("match took %.0f ms", (time.perf_counter() - t0) * 1000)
+    return result

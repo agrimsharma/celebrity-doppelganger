@@ -4,8 +4,14 @@
     {
       "name": "celeb-doppelganger-frontend",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "C:\\Users\\91913\\celebrity-doppelganger\\frontend", "run", "dev"],
+      "runtimeArgs": ["--prefix", "frontend", "run", "dev"],
       "port": 3000
+    },
+    {
+      "name": "celeb-doppelganger-backend",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "uvicorn", "backend.app:app", "--port", "8787"],
+      "port": 8787
     }
   ]
 }

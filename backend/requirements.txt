@@ -1,0 +1,7 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+numpy>=1.26
+pandas>=2.0
+opencv-python-headless>=4.9
+onnxruntime>=1.17
+insightface==1.0.1
