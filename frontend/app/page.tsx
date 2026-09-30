@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import CameraCapture, { cameraSupported } from "./CameraCapture";
 
@@ -14,12 +14,36 @@ const ERROR_MESSAGES: Record<string, string> = {
   invalid_image: "That doesn't look like a valid image file.",
   image_too_large: "That photo is too large. Please use one under 8 MB.",
   backend_unreachable: "Can't reach the matching server right now.",
+  backend_waking: "The matching server is still waking up. Please try again in a minute.",
   server_error: "The matching server hit an error. Please try again.",
 };
 
 const ACCENT_CLASSES = ["card-accent-0", "card-accent-1", "card-accent-2"];
 
 const noopSubscribe = () => () => {};
+
+// The free-tier backend (Hugging Face Space) sleeps when idle; waking it takes about a minute.
+type BackendStatus = "checking" | "waking" | "ready" | "down";
+const HEALTH_POLL_MS = 5000;
+const WAKE_TIMEOUT_MS = 5 * 60 * 1000;
+
+async function backendReady(): Promise<boolean> {
+  try {
+    const res = await fetch("/api/health", { cache: "no-store" });
+    return (await res.json()).ready === true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForBackend(timeoutMs = WAKE_TIMEOUT_MS): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await backendReady()) return true;
+    await new Promise((r) => setTimeout(r, HEALTH_POLL_MS));
+  }
+  return false;
+}
 
 export default function Home() {
   const [preview, setPreview] = useState<string | null>(null);
@@ -28,6 +52,8 @@ export default function Home() {
   const [matches, setMatches] = useState<Match[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [cameraOpen, setCameraOpen] = useState(false);
+  const [backend, setBackend] = useState<BackendStatus>("checking");
+  const [waitingForBackend, setWaitingForBackend] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const showResults = matches !== null;
@@ -35,6 +61,24 @@ export default function Home() {
   // false during server rendering (no navigator), real value once hydrated
   const canUseCamera = useSyncExternalStore(noopSubscribe, cameraSupported, () => false);
   const closeCamera = useCallback(() => setCameraOpen(false), []);
+
+  // ping the backend as soon as the page opens, so a sleeping one starts waking right away
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (await backendReady()) {
+        if (!cancelled) setBackend("ready");
+        return;
+      }
+      if (cancelled) return;
+      setBackend("waking");
+      const ok = await waitForBackend();
+      if (!cancelled) setBackend(ok ? "ready" : "down");
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function handleFileSelect(f: File | null) {
     setMatches(null);
@@ -50,6 +94,15 @@ export default function Home() {
     setPreview(null);
   }
 
+  async function postMatch(base64: string): Promise<ApiResponse> {
+    const res = await fetch("/api/match", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image: base64 }),
+    });
+    return res.json();
+  }
+
   async function handleSubmit() {
     if (!file) return;
     setLoading(true);
@@ -58,12 +111,20 @@ export default function Home() {
 
     try {
       const base64 = await fileToBase64(file);
-      const res = await fetch("/api/match", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image: base64 }),
-      });
-      const data: ApiResponse = await res.json();
+      if (backend !== "ready") {
+        setWaitingForBackend(true);
+        const ok = await waitForBackend();
+        setWaitingForBackend(false);
+        setBackend(ok ? "ready" : "down");
+      }
+      let data = await postMatch(base64);
+      if ("error" in data && data.error === "backend_waking") {
+        // went to sleep between the health check and the request: wait once more, retry once
+        setWaitingForBackend(true);
+        await waitForBackend();
+        setWaitingForBackend(false);
+        data = await postMatch(base64);
+      }
       if ("error" in data) {
         setError(ERROR_MESSAGES[data.error] ?? "Something went wrong. Please try another photo.");
       } else {
@@ -100,6 +161,7 @@ export default function Home() {
               <p className="text-center text-sm text-zinc-600">
                 Upload a photo or take a selfie, and we&apos;ll find your closest celebrity match.
               </p>
+              <BackendPill status={backend} />
 
               <div className="relative h-64 w-64">
                 <motion.div
@@ -164,7 +226,7 @@ export default function Home() {
                       animate={{ opacity: [1, 0.3, 1] }}
                       transition={{ duration: 1, repeat: Infinity, ease: "easeInOut" }}
                     />
-                    Finding your match...
+                    {waitingForBackend ? "Waking up the model..." : "Finding your match..."}
                   </span>
                 ) : (
                   "Find my doppelganger"
@@ -252,6 +314,21 @@ export default function Home() {
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+function BackendPill({ status }: { status: BackendStatus }) {
+  const styles: Record<BackendStatus, [string, string]> = {
+    checking: ["bg-zinc-300", "Connecting to the model..."],
+    waking: ["bg-amber-400 animate-pulse", "Waking up the model (free hosting sleeps when idle, about a minute)"],
+    ready: ["bg-emerald-500", "Model ready"],
+    down: ["bg-red-500", "The model isn't responding right now"],
+  };
+  const [dot, label] = styles[status];
+  return (
+    <span className="-mt-3 inline-flex items-center gap-2 text-xs text-zinc-500" role="status">
+      <span className={`h-2 w-2 rounded-full ${dot}`} /> {label}
+    </span>
   );
 }
 
