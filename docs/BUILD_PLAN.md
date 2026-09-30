@@ -9,7 +9,7 @@ date as of 2026-09-06)
 ## Pivot note (2026-09-06, updated same day — second pivot)
 
 Milestone 2 below (originally "Lambda backend") targets **Kubernetes + Terraform + Helm** instead
-of AWS Lambda — see [HANDOFF.md](./HANDOFF.md) §7 and [TECHNICAL_DESIGN.md](./TECHNICAL_DESIGN.md)
+of AWS Lambda — see the project decision log (kept private) §7 and [TECHNICAL_DESIGN.md](./TECHNICAL_DESIGN.md)
 §11 for the why and the design. **Cloud provider within that: GKE (Google Cloud), not EKS (AWS)**
 — switched the same day after cost research found AWS's account creation ties even its "Free
 Plan" into autopay, and that GKE's per-billing-account monthly credit fully offsets one zonal
@@ -21,7 +21,7 @@ as written.
 ## Where we stand
 
 Matching-quality validation (PRD D6) is done, and further hardened since: 150,720 clean face
-embeddings after a duplicate-image data-quality fix (see HANDOFF.md §2), local match testing
+embeddings after a duplicate-image data-quality fix (see the decision log §2), local match testing
 looked good with calibrated similarity scoring, brute-force cosine search measured at ~10ms even
 at this scale (no vector index needed — see Technical Design §6). Per-photo latency is ~1s
 (detect+embed) once a model is warm. Milestone 1 (package artifacts) is also done. Milestone 3
@@ -72,7 +72,7 @@ is known):**
 
 ### Current plan: GKE + Terraform + Helm
 
-Prerequisite (updated from HANDOFF.md §7's AWS-specific version): a **GCP account** + billing
+Prerequisite (updated from the decision log §7's AWS-specific version): a **GCP account** + billing
 enabled + a **GCP budget alert** (~$10-20/month), plus `gcloud` CLI, Terraform, kubectl, and Helm
 installed locally, and a GitHub repo created and pushed (this project has no git history at all
 yet — that's step 0, not optional).

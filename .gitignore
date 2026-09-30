@@ -31,3 +31,6 @@ crash.log
 .DS_Store
 *.log
 .pytest_cache/
+
+# private working notes - kept out of the public repo
+docs/HANDOFF.md
