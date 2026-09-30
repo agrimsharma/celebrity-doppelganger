@@ -11,7 +11,8 @@ COPY backend/requirements.txt .
 RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
 
 FROM python:3.11-slim
-RUN apt-get update && apt-get install -y --no-install-recommends libglib2.0-0 && rm -rf /var/lib/apt/lists/* \
+# libxcb1/libgl1: insightface depends on the GUI opencv-python build, which links them
+RUN apt-get update && apt-get install -y --no-install-recommends libglib2.0-0 libxcb1 libgl1 && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 10001 app
 COPY --from=build /wheels /wheels
 RUN pip install --no-cache-dir /wheels/* && rm -rf /wheels
