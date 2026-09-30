@@ -1,6 +1,7 @@
 """Index search + score calibration. No face-model dependency, so it's unit-testable."""
 import base64
 import json
+import mmap
 import os
 from typing import Dict, List, Optional
 
@@ -9,6 +10,10 @@ import pandas as pd
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_CALIBRATION = os.path.join(HERE, "calibration.json")
+# packed thumbnails (scripts/package_index.py): one blob + an (offset, length) row per manifest row.
+# 140K loose files are slow to sync to a Hugging Face dataset or a Kubernetes init container.
+PACK_BIN = "thumbnails.bin"
+PACK_OFFSETS = "thumbnail_offsets.npy"
 
 
 class Calibration:
@@ -32,7 +37,7 @@ class Calibration:
 
 class Index:
     def __init__(self, embeddings: np.ndarray, names: List[str], thumbnails: List[str],
-                 thumb_dir: Optional[str], calibration: Calibration):
+                 thumb_dir: Optional[str], calibration: Calibration, thumb_pack: Optional[str] = None):
         if len(embeddings) != len(names) or len(names) != len(thumbnails):
             raise ValueError("embeddings/manifest length mismatch")
         self.embeddings = np.ascontiguousarray(embeddings, dtype=np.float32)
@@ -40,13 +45,22 @@ class Index:
         self.thumbnails = np.asarray(thumbnails, dtype=object)
         self.thumb_dir = thumb_dir
         self.calibration = calibration
+        self._pack = self._offsets = None
+        if thumb_pack:
+            self._offsets = np.load(os.path.join(thumb_pack, PACK_OFFSETS))
+            if len(self._offsets) != len(names):
+                raise ValueError("thumbnail pack/manifest length mismatch")
+            with open(os.path.join(thumb_pack, PACK_BIN), "rb") as f:
+                # read-only mmap: slicing is thread-safe and the OS pages bytes in on demand
+                self._pack = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
 
     @classmethod
-    def load(cls, index_dir: str, thumb_dir: str, calibration: Calibration) -> "Index":
+    def load(cls, index_dir: str, thumb_dir: Optional[str], calibration: Calibration) -> "Index":
         emb = np.load(os.path.join(index_dir, "embeddings.npy"))
         manifest = pd.read_csv(os.path.join(index_dir, "manifest.csv"), encoding="utf-8")
+        packed = os.path.exists(os.path.join(index_dir, PACK_BIN))
         return cls(emb, manifest["name"].astype(str).tolist(), manifest["thumbnail"].tolist(),
-                   thumb_dir, calibration)
+                   None if packed else thumb_dir, calibration, thumb_pack=index_dir if packed else None)
 
     def __len__(self):
         return len(self.embeddings)
@@ -76,14 +90,17 @@ class Index:
             "name": self.names[i],
             "similarity": round(self.calibration(float(sims[i])), 4),
             "raw_similarity": round(float(sims[i]), 4),
-            "thumbnail": self._thumbnail(self.thumbnails[i]),
+            "thumbnail": self._thumbnail(i),
         } for i in picked]
 
-    def _thumbnail(self, filename: str) -> Optional[str]:
-        if not self.thumb_dir:
-            return None
-        path = os.path.join(self.thumb_dir, filename)
-        if not os.path.exists(path):
-            return None
-        with open(path, "rb") as f:
-            return "data:image/jpeg;base64," + base64.b64encode(f.read()).decode()
+    def _thumbnail(self, row: int) -> Optional[str]:
+        data = None
+        if self._pack is not None:
+            offset, length = self._offsets[row]
+            data = self._pack[offset:offset + length] if length else None
+        elif self.thumb_dir:
+            path = os.path.join(self.thumb_dir, self.thumbnails[row])
+            if os.path.exists(path):
+                with open(path, "rb") as f:
+                    data = f.read()
+        return "data:image/jpeg;base64," + base64.b64encode(data).decode() if data else None

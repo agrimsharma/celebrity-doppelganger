@@ -89,6 +89,27 @@ def test_thumbnail_embedded_as_data_uri(tmp_path):
     assert top["thumbnail"].startswith("data:image/jpeg;base64,")
 
 
+def test_packed_thumbnails(tmp_path):
+    import pandas as pd
+    from backend.matcher import PACK_BIN, PACK_OFFSETS
+
+    index, query = make_index()
+    blobs = [b"\xff\xd8a", b"", b"\xff\xd8ccc", b"\xff\xd8d", b"\xff\xd8e"]  # row 1 missing
+    offsets, pos = [], 0
+    with open(tmp_path / PACK_BIN, "wb") as f:
+        for b in blobs:
+            f.write(b)
+            offsets.append((pos, len(b)))
+            pos += len(b)
+    np.save(tmp_path / PACK_OFFSETS, np.array(offsets, dtype=np.int64))
+    np.save(tmp_path / "embeddings.npy", index.embeddings)
+    pd.DataFrame({"name": list(index.names), "thumbnail": list(index.thumbnails)}).to_csv(tmp_path / "manifest.csv")
+    packed = Index.load(str(tmp_path), None, index.calibration)
+    assert packed._thumbnail(2) == "data:image/jpeg;base64," + base64.b64encode(blobs[2]).decode()
+    assert packed._thumbnail(1) is None
+    assert packed.top_k(query, k=1)[0]["thumbnail"].startswith("data:image/jpeg;base64,")
+
+
 # --- API -------------------------------------------------------------------------------
 
 @pytest.fixture
