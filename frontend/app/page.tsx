@@ -1,7 +1,8 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState, useSyncExternalStore } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import CameraCapture, { cameraSupported } from "./CameraCapture";
 
 // similarity = percentile of this score among the best matches of people NOT in the index
 type Match = { name: string; similarity: number; raw_similarity?: number; thumbnail: string | null };
@@ -18,15 +19,22 @@ const ERROR_MESSAGES: Record<string, string> = {
 
 const ACCENT_CLASSES = ["card-accent-0", "card-accent-1", "card-accent-2"];
 
+const noopSubscribe = () => () => {};
+
 export default function Home() {
   const [preview, setPreview] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [matches, setMatches] = useState<Match[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const showResults = matches !== null;
+
+  // false during server rendering (no navigator), real value once hydrated
+  const canUseCamera = useSyncExternalStore(noopSubscribe, cameraSupported, () => false);
+  const closeCamera = useCallback(() => setCameraOpen(false), []);
 
   function handleFileSelect(f: File | null) {
     setMatches(null);
@@ -90,7 +98,7 @@ export default function Home() {
                 Celebrity Doppelganger Finder
               </motion.h1>
               <p className="text-center text-sm text-zinc-600">
-                Upload a photo and we&apos;ll find your closest celebrity match.
+                Upload a photo or take a selfie, and we&apos;ll find your closest celebrity match.
               </p>
 
               <div className="relative h-64 w-64">
@@ -133,6 +141,16 @@ export default function Home() {
                 className="hidden"
                 onChange={(e) => handleFileSelect(e.target.files?.[0] ?? null)}
               />
+
+              {canUseCamera && (
+                <button
+                  onClick={() => setCameraOpen(true)}
+                  disabled={loading}
+                  className="-mt-2 inline-flex items-center gap-2 rounded-full border-2 border-black/10 bg-white px-4 py-2 text-sm font-bold text-zinc-700 disabled:opacity-40"
+                >
+                  <CameraIcon /> Use camera
+                </button>
+              )}
 
               <button
                 onClick={handleSubmit}
@@ -221,7 +239,28 @@ export default function Home() {
           </motion.main>
         )}
       </AnimatePresence>
+
+      <AnimatePresence>
+        {cameraOpen && (
+          <CameraCapture
+            onClose={closeCamera}
+            onCapture={(f) => {
+              handleFileSelect(f);
+              setCameraOpen(false);
+            }}
+          />
+        )}
+      </AnimatePresence>
     </div>
+  );
+}
+
+function CameraIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+      <path d="M4 8h3l2-3h6l2 3h3v11H4z" strokeLinejoin="round" />
+      <circle cx="12" cy="13" r="3.5" />
+    </svg>
   );
 }
 
