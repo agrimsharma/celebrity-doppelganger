@@ -5,3 +5,4 @@ numpy>=1.26
 pandas>=2.0
 opencv-python-headless>=4.9
 pytest>=8
+prometheus-client>=0.20
