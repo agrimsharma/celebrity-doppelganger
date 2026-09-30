@@ -1,0 +1,9 @@
+Backend deployed as {{ include "backend.fullname" . }} in namespace {{ .Release.Namespace }}.
+
+The first pod start copies ~1 GB of index from gs://{{ .Values.index.bucket }} and loads the
+model - watch it with:
+  kubectl -n {{ .Release.Namespace }} get pods -w
+
+The Google load balancer takes ~5-10 minutes to provision. Then:
+  kubectl -n {{ .Release.Namespace }} get ingress {{ include "backend.fullname" . }}
+  curl http://<ADDRESS>/healthz

@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "backend.fullname" . }}
+  labels:
+    {{- include "backend.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "backend.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "backend.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/secret: {{ .Values.apiKey | sha256sum }}
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+      initContainers:
+        - name: fetch-index
+          image: gcr.io/google.com/cloudsdktool/google-cloud-cli:slim
+          command: ["gcloud", "storage", "rsync", "--recursive",
+                    "gs://{{ .Values.index.bucket }}/{{ .Values.index.prefix }}", "/index"]
+          env:
+            - name: CLOUDSDK_CONFIG  # gcloud needs a writable config dir as a non-root user
+              value: /tmp/gcloud
+          volumeMounts:
+            - name: index
+              mountPath: /index
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+      containers:
+        - name: backend
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.targetPort }}
+          env:
+            - name: INDEX_DIR
+              value: /index
+            - name: THUMB_DIR
+              value: /index/thumbnails
+            - name: MPLCONFIGDIR  # read-only root fs; insightface imports matplotlib
+              value: /tmp
+            {{- if .Values.apiKey }}
+            - name: API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "backend.fullname" . }}
+                  key: API_KEY
+            {{- end }}
+          # the model + index load takes a while on a small node; don't let liveness kill it
+          startupProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: index
+              mountPath: /index
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: index
+          emptyDir:
+            sizeLimit: {{ .Values.index.sizeLimit }}
+        - name: tmp
+          emptyDir: {}
