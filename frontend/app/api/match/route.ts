@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 
-// Proxies to the local real-matching server (scripts/local_api_server.py) - runs the actual
-// validated pipeline (277,752 real embeddings) instead of the earlier hardcoded mock. Swap this
-// for the real Lambda Function URL once Milestone 2 (AWS backend) is deployed.
-const BACKEND_URL = "http://127.0.0.1:8787/match";
+// Server-side proxy to the matching backend (backend/app.py). Keeps the backend URL and its
+// shared API key out of the browser. Locally: `uvicorn backend.app:app --port 8787`;
+// deployed: the GKE Ingress IP (set BACKEND_URL / BACKEND_API_KEY in Vercel).
+const BACKEND_URL = process.env.BACKEND_URL ?? "http://127.0.0.1:8787/match";
+const BACKEND_API_KEY = process.env.BACKEND_API_KEY;
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);
@@ -14,7 +15,10 @@ export async function POST(req: NextRequest) {
   try {
     const res = await fetch(BACKEND_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(BACKEND_API_KEY ? { "X-API-Key": BACKEND_API_KEY } : {}),
+      },
       body: JSON.stringify({ image: body.image }),
     });
     const data = await res.json();
