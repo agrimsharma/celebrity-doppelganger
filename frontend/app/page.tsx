@@ -159,7 +159,7 @@ export default function Home() {
                 Celebrity Doppelganger Finder
               </motion.h1>
               <p className="text-center text-sm text-zinc-600">
-                Upload a photo or take a selfie, and we&apos;ll find your closest celebrity match.
+                Upload a photo or take a selfie, and we&apos;ll find your closest match among 140,000 celebrity faces.
               </p>
               <BackendPill status={backend} />
 
