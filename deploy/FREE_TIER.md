@@ -1,7 +1,7 @@
 # Going live for free (Modal + Vercel, no card anywhere)
 
 **Cost: ₹0.** Modal's Starter plan gives $30/month of compute credit with no card on file; the
-backend scales to zero when idle, so a recruiter visit costs a fraction of a cent. Vercel's Hobby
+backend scales to zero when idle, so a visit costs a fraction of a cent. Vercel's Hobby
 plan is free. If Modal's credit ever ran out, the backend would simply stop until next month.
 
 The first request after an idle period starts a container (~15-30 s); the page shows

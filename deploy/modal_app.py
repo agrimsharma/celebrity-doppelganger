@@ -17,7 +17,7 @@ import pathlib
 import modal
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-SCALEDOWN_S = 300  # keep a container warm 5 min after the last request: a recruiter's clicks stay fast
+SCALEDOWN_S = 300  # keep a container warm 5 min after the last request: a visitor's clicks stay fast
 
 app = modal.App("doppelganger")
 index = modal.Volume.from_name("doppelganger-index", create_if_missing=True)

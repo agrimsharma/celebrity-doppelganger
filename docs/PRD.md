@@ -4,18 +4,21 @@
 **Author:** Agrim Sharma
 **Last updated:** 2026-08-20
 
+> **Planning history.** Written before and during the build; some plans here (AWS Lambda, FAISS, a spot
+> node pool) changed along the way. The [README](../README.md) describes what actually shipped.
+
 ---
 
 ## 1. Problem / Motivation
 
-Portfolio project to demonstrate three skills together in one coherent system:
+A project combining three skills in one coherent system:
 
 1. Applied ML — face embeddings + nearest-neighbor search at 500k+ item scale.
 2. Frontend engineering (Node.js-based) — an upload UI and API, not just a notebook.
 3. Cloud deployment (AWS) — a real, live, deployed system rather than a local script.
 
-Secondary goal: the project itself should read well in interviews — clear scoping, documented
-tradeoffs, and a design that shows senior-level judgment (not just "it works").
+Secondary goal: clear scoping, documented tradeoffs, and a design that holds up to review
+(not just "it works").
 
 ## 2. Goals
 
@@ -27,7 +30,7 @@ tradeoffs, and a design that shows senior-level judgment (not just "it works").
   more than anything else).
 - G4: Uploaded user photos are not retained beyond a short expiry window.
 - G5: The build produces artifacts (this PRD, a technical design doc, architecture diagram) that
-  are themselves presentable in an interview.
+  explain the system on their own.
 
 ## 3. Non-Goals (v1)
 
@@ -38,12 +41,12 @@ tradeoffs, and a design that shows senior-level judgment (not just "it works").
 - Supporting video, multiple faces per image, or batch uploads.
 - Handling adversarial inputs robustly (no face, non-human image) beyond a basic "no face detected"
   error.
-- Guaranteed uptime / SLA — this is a portfolio demo, brief downtime is acceptable.
+- Guaranteed uptime / SLA — this is a demo, brief downtime is acceptable.
 
 ## 4. Target User
 
-Primarily: interviewers/recruiters trying the live link, and Agrim demoing it in interviews.
-Secondarily: casual users who find the link and want to try it once.
+Casual users who find the live link and want to try it once, and engineers reading the code
+and design docs.
 
 ## 5. Constraints
 
@@ -65,7 +68,7 @@ Secondarily: casual users who find the link and want to try it once.
 - Deployed and reachable at a public URL with $0 monthly cost under normal (low, demo-level) traffic.
 - No stored user images survive past their stated expiry.
 - PRD + technical design doc + architecture diagram exist and are coherent enough to walk through
-  in an interview.
+  end to end.
 
 ## 7. High-Level Scope (MVP)
 
@@ -88,9 +91,9 @@ Secondarily: casual users who find the link and want to try it once.
   gets revisited then — but the default is to solve the hosting problem, not shrink the dataset.
 - **D2 — Displaying the matched celebrity's actual dataset photo: approved.** Non-commercial demo,
   not redistributing the dataset in bulk, disclaimer shown in the UI. Revisit only if this project
-  ever moves beyond a personal portfolio demo.
+  ever moves beyond a personal, non-commercial demo.
 - **D3 — Timeline: quality-bound, not date-bound.** No fixed deadline. The real success condition
-  is "a result strong enough to put on a CV/show in interviews," not shipping by a specific date —
+  is a result that's genuinely good, not shipping by a specific date —
   so we move as fast as possible without cutting corners that would make the result look weak.
   Practically: no arbitrary time-boxing of milestones, but no gold-plating either — each milestone
   ships when it's genuinely good, then we move to the next.

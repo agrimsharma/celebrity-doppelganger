@@ -39,5 +39,5 @@ done
 for ctx in $(kubectl config get-contexts -o name 2>/dev/null | grep "gke_${PROJECT}_"); do
   kubectl config delete-context "$ctx" >/dev/null 2>&1
 done
-[ "$left" = 0 ] && echo "Nothing left. Your friend can now close the billing account (Billing -> Account management)." \
+[ "$left" = 0 ] && echo "Nothing left. The billing account can now be closed (Billing -> Account management)." \
                 || echo "Delete the items above (or re-run this script) before closing the billing account."

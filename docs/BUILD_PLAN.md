@@ -4,6 +4,9 @@
 **Depends on:** [PRD.md](./PRD.md), [TECHNICAL_DESIGN.md](./TECHNICAL_DESIGN.md) §11 (both up to
 date as of 2026-09-06)
 
+> **Planning history.** Written before and during the build; some plans here (AWS Lambda, FAISS, a spot
+> node pool) changed along the way. The [README](../README.md) describes what actually shipped.
+
 ---
 
 ## Pivot note (2026-09-06, updated same day — second pivot)
@@ -123,7 +126,7 @@ this logic runs, not changing the contract.
 - A visible disclaimer per PRD D2 (dataset license, non-commercial demo).
 - README covering architecture, the license caveat, and — honestly — the debugging story from
   getting GPU inference working on vast.ai (the CUDA/onnxruntime-gpu package-collision saga is a
-  genuinely good "here's how I debug systematically" interview anecdote, worth writing up).
+  good example of systematic debugging, worth writing up).
 
 ## Milestone 5 — Deferred features (v1.1+)
 

@@ -5,6 +5,9 @@
 superseded by the pivot, see banners)
 **Last updated:** 2026-09-06
 
+> **Planning history.** Written before and during the build; some plans here (AWS Lambda, FAISS, a spot
+> node pool) changed along the way. The [README](../README.md) describes what actually shipped.
+
 ---
 
 ## Pivot banner #2 (2026-09-06) — cloud provider: AWS/EKS → GCP/GKE
@@ -43,8 +46,7 @@ looked attractive) but describe a path that is not being built.
 longer fully met even under GKE (see banner #2) — a running worker-node VM still costs something
 on any cloud, since none of the providers' small perpetual-free compute tiers comfortably fit
 this workload's model+embeddings+thumbnails bundle. This is an accepted, deliberate tradeoff
-(K8s/Terraform/Helm resume signal for the target role matters more than $0 hosting for this
-project), not an oversight — see §11 for the cost mitigation plan.
+(hands-on Kubernetes/Terraform/Helm matters more than $0 hosting for this project), not an oversight — see §11 for the cost mitigation plan.
 
 ## 1. Free-tier facts this design relies on (verified, not assumed)
 
@@ -87,8 +89,8 @@ bottleneck; the 8GB figure that made this feel risky was the *images*, not the *
 **Search method:** at this size, brute-force cosine similarity (one matrix-vector multiply,
 523,051 × 512) is under ~50ms on any modern CPU — an approximate-NN index (FAISS/HNSW) is not
 required for performance. Recommend building it with **FAISS (`IndexFlatIP`, later swappable to
-HNSW)** anyway, specifically because "vector index at 500k+ scale" is the resume-relevant skill —
-brute-force numpy would technically work but doesn't demonstrate the same thing.
+HNSW)** anyway, specifically to exercise a real vector index at 500k+ scale — brute-force numpy would
+technically work but doesn't exercise the same thing.
 
 ## 3. What actually needs to be "hosted" vs "shipped in the deployment" (SUPERSEDED — see §11)
 
@@ -163,10 +165,10 @@ and that's a perfectly legitimate story to tell.
 
 ## 7. Frontend
 
-- Node.js-based app (Express or Next.js — Next.js gives a slightly more modern resume line and
-  makes the upload UI trivial; Express is lighter and more transparent for interview walkthroughs).
-  Recommend **Next.js**, minimal use of its features (no need for SSR complexity here) — mainly for
-  the resume signal and because deploying it is simple.
+- Node.js-based app (Express or Next.js — Next.js is more modern and
+  makes the upload UI trivial; Express is lighter and more transparent).
+  Recommend **Next.js**, minimal use of its features (no need for SSR complexity here) — mainly because
+  deploying it is simple.
 - Calls the Lambda Function URL directly from the browser (CORS enabled on the function).
 
 **RESOLVED (PRD D7): a free external platform, not S3+CloudFront.** Recommend **Vercel**
@@ -237,7 +239,7 @@ deployed differently:
 - **Infra: Terraform** provisions a **GKE cluster** (VPC/subnet, node pool, Workload Identity
   Federation for pod-level GCP permissions, the GKE control plane itself — using a **zonal**
   cluster specifically, since that's what the free-tier credit in banner #2 applies to, not a
-  regional one) — this *is* the resume-relevant deliverable, not an implementation detail to
+  regional one) — this *is* the point of the deployment, not an implementation detail to
   minimize.
 - **Deploy: Helm chart** wrapping a Kubernetes `Deployment` (the containerized matcher),
   `Service`, and `Ingress` (GKE's native Ingress-to-Google-Cloud-Load-Balancer integration, or a
@@ -252,6 +254,6 @@ deployed differently:
 - **Not yet decided at time of writing** (resolve when this milestone actually starts): exact
   Ingress/LoadBalancer approach, whether to rewrite `local_api_server.py` in a proper framework
   (FastAPI) or containerize it close to as-is, node pool sizing/machine type, and whether GKE
-  Autopilot (less infra to manage, but less "I configured the node pool myself" resume detail) or
+  Autopilot (less infra to manage, but less hands-on node-pool configuration) or
   Standard mode with a manually-sized node pool is used. None of these block starting the
   Terraform scaffolding for the cluster itself.

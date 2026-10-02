@@ -1,19 +1,33 @@
 # Celebrity Doppelganger
 
-Upload a photo or take a live selfie, and find your three closest celebrity lookalikes out of **139,845 face photos of 36,310 celebrities**.
+Upload a photo or take a live selfie, and find your three closest celebrity lookalikes among **139,845 face photos of 36,310 celebrities**.
 
-The app detects the face, embeds it with ArcFace, and runs a cosine search over the index. The result is shown as a match strength calibrated against how well people who *aren't* celebrities match.
+**Live demo: [celebrity-doppelganger.vercel.app](https://celebrity-doppelganger.vercel.app)** (free hosting, so the first request after a quiet spell takes ~20 s while the model wakes up)
+
+<p align="center"><img src="docs/screenshots/app-results.jpg" width="820" alt="Results page: the uploaded face next to its three closest celebrity matches"></p>
+
+The app detects the face, embeds it with ArcFace, and runs a cosine search over the index. The score is shown as a **match strength**: a percentile calibrated against how well thousands of people who *aren't* celebrities match.
+
+What's in the repo:
+- **ML pipeline:** embedding 277k IMDB-WIKI photos on a rented GPU, duplicate and label-noise cleanup, leave-one-out retrieval evaluation, and score calibration against a real-face null distribution.
+- **Serving:** a FastAPI backend with Prometheus metrics and a Next.js 16 frontend with live camera capture.
+- **Infrastructure:** Terraform (GKE and AKS), a Helm chart, keyless cloud auth with workload identity, HPA autoscaling, a k6 load test, Grafana dashboards, and keyless CI/CD from GitHub Actions.
+
+## Architecture
 
 ```
- Browser ──► Next.js 16 (Vercel) ──/api/match proxy──►  FastAPI backend (GKE)
- resize ≤1024px                   adds X-API-Key         SCRFD detect → ArcFace 512-d
-                                                         → cosine top-k (name-deduped)
-                                                         → percentile calibration
-                                                                 ▲
-                                          init container pulls index from private GCS
- Terraform: VPC · zonal GKE (spot node pool) · Artifact Registry · GCS · Workload Identity
- Helm: Deployment · Service (NEG) · GCE Ingress + static IP · BackendConfig · HPA
+ Browser ──► Next.js 16 ──/api/match proxy──► FastAPI backend
+ resize ≤1024px, camera   adds X-API-Key      SCRFD detect → ArcFace 512-d embedding
+                                              → cosine top-k over 139,845 faces (name-deduped)
+                                              → percentile calibration → 3 matches + thumbnails
+
+ Free tier (always on, ₹0):   Vercel (frontend) + Modal (serverless backend, scales to zero)
+ Full deployment (Kubernetes): Terraform → GKE · Artifact Registry · private GCS bucket · Workload Identity
+                               Helm → ingress-nginx + Let's Encrypt TLS · HPA · ServiceMonitor → Grafana
+                               GitHub Actions → Workload Identity Federation → Cloud Build → helm upgrade
 ```
+
+The same Helm chart runs on a local kind cluster, on AKS (`infra/azure/`) and on GKE (`infra/terraform/`).
 
 ## Results
 
@@ -52,9 +66,46 @@ Why it changed twice:
 - Search: ~24 ms over 139,845 faces with brute-force numpy on CPU. At this size FAISS isn't needed.
 - Embedding: ~0.55 s per image on CPU and ~0.011 s on an RTX 3060 Ti. The full dataset was embedded on a rented Vast.ai GPU (`notebooks/`).
 
-## Run locally
+**Under load** (k6 in-cluster, 8 concurrent uploads for 3 minutes, GKE e2-standard-4 nodes):
 
-Requires the data under `data/`, which isn't in the repo (see *Data* below).
+| Requests | Failed | p50 | p95 | Autoscaling |
+|---|---|---|---|---|
+| 1,056 | **0%** | 0.77 s | **1.32 s** | HPA scaled the backend 1 → 2 pods when CPU passed 60% |
+
+## Full deployment on Kubernetes
+
+The whole stack goes up and comes down with one command each (`infra/session/up-gcp.sh` and `down-gcp.sh`). It was run end to end on GKE, together with the [churn platform](https://github.com/agrimsharma/saas-churn-platform) in the same cluster, and then torn down.
+
+| | |
+|---|---|
+| ![Cluster overview](docs/screenshots/cluster-overview.jpg) | ![GKE workloads](docs/screenshots/gke-workloads.jpg) |
+| **Infrastructure as code:** Terraform creates the cluster, registry, private bucket, service accounts and GitHub federation; Helm installs ingress-nginx, cert-manager, kube-prometheus-stack and both apps. | **15 workloads** across both projects, all healthy. |
+| ![Cloud Build](docs/screenshots/cloud-build.jpg) | ![Workload identity](docs/screenshots/workload-identity.jpg) |
+| **4 images built in parallel** on Cloud Build (amd64, from an arm64 Mac). | **No keys anywhere:** an init container pulls the 1 GB index from a private bucket using the pod's Kubernetes service account, mapped to a Google service account through Workload Identity. The only secrets are the app's API key and the TLS cert. |
+
+**Autoscaling under load**: k6 runs as a Job inside the cluster, so a home connection isn't the bottleneck.
+
+![HPA scaling from 1 to 2 replicas while Grafana shows latency and replicas](docs/screenshots/autoscaling.jpg)
+
+<details><summary>k6 summary</summary>
+
+![k6 summary: 1,056 requests, 0% failed, p95 1.32 s](docs/screenshots/load-test.jpg)
+</details>
+
+**CI/CD: push to `main`, live 7 minutes later.** `deploy-gke.yml` logs in to GCP through Workload Identity Federation (no stored key), builds both images on Cloud Build and runs `helm upgrade`. Kubernetes swaps the pods with a rolling update, so the site doesn't go down.
+
+| | |
+|---|---|
+| ![GitHub Actions run](docs/screenshots/cd-pipeline.jpg) | ![git push and the replaced ReplicaSets](docs/screenshots/cd-push-rollout.jpg) |
+| The pipeline run: 5m 29s building, 1m 2s rolling out. | The push (top) and Kubernetes' record of the rollout (bottom): old ReplicaSets at 0, new ones at 1. |
+
+![The page before and after the deploy, with the running image tag matching the pushed commit](docs/screenshots/cd-before-after.jpg)
+
+The workflow only runs while a cluster exists: `up-gcp.sh` sets the repo variables it needs and `down-gcp.sh` removes them. The AKS workflow follows the same pattern.
+
+## Run it
+
+**Locally** (needs the data under `data/`, which isn't in the repo; see *Privacy & data*):
 
 ```bash
 pip install -r backend/requirements.txt
@@ -63,62 +114,59 @@ uvicorn backend.app:app --port 8787        # first run downloads the insightface
 cd frontend && npm install && npm run dev  # http://localhost:3000
 ```
 
-To rebuild the index artifacts from the embeddings:
-
-```bash
-python scripts/clean_label_noise.py        # -> data/processed/consolidated_clean/
-python scripts/evaluate_retrieval.py --index data/processed/consolidated_clean
-docker run --rm -v "$PWD:/repo" -w /repo -e MPLCONFIGDIR=/tmp doppelganger-backend \
-  python scripts/calibrate_real_faces.py --images data/raw/ffhq/images   # -> backend/calibration.json
-```
-
-Tests (no model or dataset needed):
+**Tests** (no model or dataset needed):
 
 ```bash
 pip install -r backend/requirements-dev.txt && pytest backend/tests
 ```
 
-## Deploy (GKE)
+**Kubernetes:**
+
+| Target | Command |
+|---|---|
+| Local (kind) | `./infra/local/kind-up.sh`, then `helm install` with `infra/helm/doppelganger/values-kind.yaml` |
+| GKE | `infra/terraform/terraform.tfvars` with `project_id`, then `./infra/session/up-gcp.sh` (and `down-gcp.sh`) |
+| AKS | `infra/azure/terraform.tfvars`, then `./infra/session/up.sh` (and `down.sh`) |
+
+**Free hosting** (Modal + Vercel): see [deploy/FREE_TIER.md](deploy/FREE_TIER.md).
+
+**Rebuilding the index** from the embeddings:
 
 ```bash
-cd infra/terraform && cp terraform.tfvars.example terraform.tfvars   # set project_id
-terraform init && terraform apply
-cd ../.. && API_KEY=$(openssl rand -hex 24) ./scripts/deploy.sh
+python scripts/clean_label_noise.py        # -> data/processed/consolidated_clean/
+python scripts/evaluate_retrieval.py --index data/processed/consolidated_clean
+python scripts/calibrate_real_faces.py --images data/raw/ffhq/images   # -> backend/calibration.json
+python scripts/package_index.py            # -> data/deploy/index/ (what the backend serves)
 ```
-
-`deploy.sh` does four things:
-1. Uploads the packaged index to the private bucket.
-2. Builds and pushes the image.
-3. Fetches cluster credentials.
-4. Runs `helm upgrade --install`.
-
-Then set `BACKEND_URL` and `BACKEND_API_KEY` in the Vercel project, as printed at the end of the script.
-
-**Cost:** one zonal cluster, so the GKE free-tier credit covers the control-plane fee. Only the e2-standard-2 spot node and the load balancer are billed.
 
 ## Privacy & data
 
 - **Uploads:** decoded and embedded in memory only. Nothing is written to disk or logged, and the embedding is discarded after the request.
-- **Dataset:** [IMDB-WIKI](https://data.vision.ee.ethz.ch/cvl/rrothe/imdb-wiki/) is licensed for **academic research only**. That's why the dataset, embeddings and thumbnails are gitignored, never baked into the image, and served from a private bucket.
-- **Scope:** this is a non-commercial portfolio demo.
-- **Calibration faces:** [FFHQ](https://github.com/NVlabs/ffhq-dataset) (NVIDIA, CC BY-NC-SA 4.0), used only to compute score percentiles. No FFHQ images are stored in the repo or the deployment.
 - **Live selfie:** the camera stream stays in the browser. A frame is captured only when you press "Take photo", and the camera is released straight away.
+- **Dataset:** [IMDB-WIKI](https://data.vision.ee.ethz.ch/cvl/rrothe/imdb-wiki/) is licensed for **academic research only**. That's why the dataset, embeddings and thumbnails are gitignored, never baked into an image, and served from private storage.
+- **Calibration faces:** [FFHQ](https://github.com/NVlabs/ffhq-dataset) (NVIDIA, CC BY-NC-SA 4.0), used only to compute score percentiles. No FFHQ images are stored in the repo or the deployment.
+- **Scope:** a non-commercial demo.
 
 ## Repo layout
 
 ```
-backend/          FastAPI matcher, calibration.json, Dockerfile, tests
-frontend/         Next.js 16 + React 19 + Tailwind v4 + Framer Motion
-infra/terraform/  GKE, VPC, Artifact Registry, GCS, Workload Identity
-infra/helm/       backend chart
-scripts/          embedding, dedup, cleaning, evaluation, calibration, packaging, deploy
-notebooks/        Vast.ai GPU embedding notebook
-docs/             PRD, technical design, build plan, decision log
-reports/          evaluation + cleaning results (JSON)
+backend/            FastAPI matcher, calibration.json, Dockerfile, tests
+frontend/           Next.js 16 + React 19 + Tailwind v4 + Framer Motion, camera capture
+deploy/             free tier: Modal app + setup guide
+infra/terraform/    GKE: VPC, cluster, Artifact Registry, GCS, Workload Identity, GitHub federation
+infra/azure/        the same on AKS
+infra/helm/         chart: backend, frontend, ingress, HPA, ServiceMonitor, Grafana dashboard
+infra/session/      one-command up/down for the full GKE or AKS environment
+infra/loadtest/     k6 script + in-cluster Job
+infra/local/        kind cluster
+scripts/            embedding, dedup, cleaning, evaluation, calibration, packaging
+notebooks/          Vast.ai GPU embedding notebook
+docs/               PRD, technical design, build plan, screenshots
+reports/            evaluation + cleaning results (JSON)
 ```
 
 ## Known limitations
 
 - 74% of identities have a single photo, which can't be cross-checked. 3,733 of them come from IMDb and may be mislabeled.
 - Match strength ranks how *close* a match is, not whether a human would call it a lookalike. There's no user study.
-- IMDB-WIKI skews toward Western film and TV figures, so matches are likely weaker for underrepresented groups. This hasn't been measured.
+- IMDB-WIKI skews toward Western film and TV figures, so matches are weaker for groups it underrepresents. This hasn't been measured.

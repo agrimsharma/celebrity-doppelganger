@@ -16,7 +16,7 @@ frontend/*.tsbuildinfo
 frontend/next-env.d.ts
 
 # Generated / packaged artifacts (regenerable from scripts/ + data/)
-imdb_friend_package.zip
+imdb_package.zip
 reports/*.html
 reports/*.npy
 
@@ -34,3 +34,5 @@ crash.log
 
 # private working notes - kept out of the public repo
 docs/HANDOFF.md
+docs/EMBEDDING_ON_A_SECOND_MACHINE.md
+.claude/
