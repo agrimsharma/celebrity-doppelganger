@@ -1,0 +1,26 @@
+# In-cluster load test (k6) for the autoscaling demo - runs next to the app, so a slow home
+# connection isn't the bottleneck. Hits the frontend's /api/match (frontend -> backend path).
+#   kubectl -n doppelganger create configmap loadtest --from-file=selfie.jpg=<photo> --from-file=match.js=infra/loadtest/match.js
+#   kubectl -n doppelganger apply -f infra/loadtest/k6-job.yaml && kubectl -n doppelganger logs -f job/k6-load
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-load
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: k6
+          image: grafana/k6:latest
+          args: ["run", "/scripts/match.js"]
+          env:
+            - {name: BASE_URL, value: "http://doppelganger-frontend"}
+            - {name: IMAGE, value: /scripts/selfie.jpg}
+          volumeMounts:
+            - {name: scripts, mountPath: /scripts}
+      volumes:
+        - name: scripts
+          configMap: {name: loadtest}
