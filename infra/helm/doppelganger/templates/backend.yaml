@@ -47,11 +47,30 @@ spec:
             - {name: HOME, value: /tmp}
             - {name: AZURE_CONFIG_DIR, value: /tmp/.azure}
           {{- else if eq $idx.source "gcs" }}
-          image: gcr.io/google.com/cloudsdktool/google-cloud-cli:slim
-          command: ["gcloud", "storage", "rsync", "--recursive",
-                    "gs://{{ required "index.gcs.bucket" $idx.gcs.bucket }}/{{ $idx.gcs.prefix }}", "/index"]
+          # Workload identity, no keys: the GKE metadata server hands this pod a short-lived token for
+          # its Google service account. Plain Python (backend image, uid 10001) rather than the gcloud
+          # image, whose copy code crashes on a uid without a passwd entry.
+          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
+          command: ["python", "-c"]
+          args:
+            - |
+              import json, os, shutil, urllib.parse, urllib.request as u
+              md = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token"
+              token = json.load(u.urlopen(u.Request(md, headers={"Metadata-Flavor": "Google"})))["access_token"]
+              auth = {"Authorization": "Bearer " + token}
+              bucket, prefix = os.environ["BUCKET"], os.environ["PREFIX"].strip("/") + "/"
+              api = "https://storage.googleapis.com/storage/v1/b/" + bucket + "/o"
+              listing = json.load(u.urlopen(u.Request(api + "?prefix=" + urllib.parse.quote(prefix), headers=auth)))
+              for item in listing.get("items", []):
+                  name = item["name"]
+                  dst = os.path.join("/index", name[len(prefix):])
+                  req = u.Request(api + "/" + urllib.parse.quote(name, safe="") + "?alt=media", headers=auth)
+                  with u.urlopen(req) as r, open(dst, "wb") as f:
+                      shutil.copyfileobj(r, f, 1 << 20)
+                  print(f"fetched gs://{bucket}/{name} ({int(item['size']) / 1e6:.0f} MB)", flush=True)
           env:
-            - {name: CLOUDSDK_CONFIG, value: /tmp/gcloud}
+            - {name: BUCKET, value: {{ required "index.gcs.bucket" $idx.gcs.bucket | quote }}}
+            - {name: PREFIX, value: {{ $idx.gcs.prefix | quote }}}
           {{- else if eq $idx.source "hf" }}
           image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
           command: ["python", "-c",
