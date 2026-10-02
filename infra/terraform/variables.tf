@@ -18,24 +18,24 @@ variable "zone" {
 variable "name" {
   description = "Prefix for resource names."
   type        = string
-  default     = "doppelganger"
+  default     = "portfolio"
 }
 
 variable "machine_type" {
-  description = "Node machine type. e2-standard-2 (2 vCPU / 8 GB) fits one backend pod (~1.5 GB: 140K-face index + ArcFace model) plus GKE system pods."
+  description = "Node machine type. 2x e2-standard-4 (4 vCPU / 16 GB) runs both projects + monitoring with headroom."
   type        = string
-  default     = "e2-standard-2"
+  default     = "e2-standard-4"
 }
 
 variable "node_count" {
   type    = number
-  default = 1
+  default = 2
 }
 
 variable "spot_nodes" {
-  description = "Spot VMs cost ~60-90% less but can be preempted (the pod reschedules in ~1-2 min). Fine for a portfolio demo."
+  description = "Spot VMs cost ~60-90% less but Google can reclaim them at any time - off for a recording session."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "k8s_namespace" {
@@ -48,4 +48,15 @@ variable "k8s_service_account" {
   description = "Kubernetes ServiceAccount name the Helm chart creates."
   type        = string
   default     = "doppelganger-backend"
+}
+
+variable "github_owner" {
+  description = "GitHub account whose repos may deploy to this cluster via Workload Identity Federation (empty = no CD identity)."
+  type        = string
+  default     = "agrimsharma"
+}
+
+variable "github_repos" {
+  type    = list(string)
+  default = ["celebrity-doppelganger", "saas-churn-platform"]
 }

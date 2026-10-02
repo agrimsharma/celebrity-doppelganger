@@ -1,10 +1,14 @@
-# GKE: images from Artifact Registry, index from GCS via workload identity, GCE Ingress + static IP.
-# scripts/deploy.sh fills in the repositories, bucket, service account and static IP name.
+# GKE: images from Artifact Registry, index from GCS via workload identity, ingress-nginx + Let's Encrypt.
+# infra/session/up-gcp.sh fills in the repositories, bucket, service account and host.
 index:
   source: gcs
 ingress:
-  className: gce
+  className: nginx
+  tls: {enabled: true, clusterIssuer: letsencrypt}
 backend:
   image: {pullPolicy: Always}
+  autoscaling: {enabled: true, minReplicas: 1, maxReplicas: 2, targetCPUUtilizationPercentage: 60}
 frontend:
   image: {pullPolicy: Always}
+monitoring:
+  serviceMonitor: true

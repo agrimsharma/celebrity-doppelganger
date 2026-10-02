@@ -2,8 +2,11 @@ locals {
   services = [
     "container.googleapis.com",
     "artifactregistry.googleapis.com",
+    "cloudbuild.googleapis.com",
     "storage.googleapis.com",
     "iam.googleapis.com",
+    "iamcredentials.googleapis.com",
+    "sts.googleapis.com",
     "compute.googleapis.com",
   ]
 }
@@ -89,8 +92,20 @@ resource "google_service_account_iam_member" "workload_identity" {
   depends_on         = [google_container_cluster.main]
 }
 
-# static IP for the Ingress, so the frontend's BACKEND_URL survives redeploys
-resource "google_compute_global_address" "ingress" {
-  name       = "${var.name}-ingress"
-  depends_on = [google_project_service.apis]
+# --- image builds (Cloud Build, remote amd64 - nothing is cross-compiled locally) ----------------
+
+resource "google_service_account" "builder" {
+  account_id   = "${var.name}-builder"
+  display_name = "Cloud Build: builds images into Artifact Registry"
+}
+
+resource "google_project_iam_member" "builder" {
+  for_each = toset([
+    "roles/artifactregistry.writer",
+    "roles/logging.logWriter",
+    "roles/storage.objectAdmin", # read the uploaded build source, write build logs
+  ])
+  project = var.project_id
+  role    = each.value
+  member  = "serviceAccount:${google_service_account.builder.email}"
 }
