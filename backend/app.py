@@ -11,6 +11,7 @@ Run:  uvicorn backend.app:app --port 8787
 """
 import base64
 import binascii
+import hmac
 import json
 import logging
 import os
@@ -34,6 +35,10 @@ MIN_DET_SCORE = float(os.environ.get("MIN_DET_SCORE", "0.75"))
 MAX_IMAGE_BYTES = int(os.environ.get("MAX_IMAGE_BYTES", str(8 * 1024 * 1024)))
 # shared secret between the Next.js proxy and this service; unset = no auth (local dev)
 API_KEY = os.environ.get("API_KEY")
+# "enforce" rejects requests without the key; "report" only logs and counts them - turn the key on
+# in report mode first, check that real traffic carries it, then enforce (no outage if a client
+# was misconfigured)
+API_KEY_MODE = os.environ.get("API_KEY_MODE", "enforce")
 TOP_K = 3
 
 log = logging.getLogger("doppelganger")
@@ -42,6 +47,9 @@ log = logging.getLogger("doppelganger")
 MATCH_SECONDS = Histogram("doppelganger_match_seconds", "End-to-end /match latency (decode, detect, embed, search)",
                           buckets=(0.05, 0.1, 0.2, 0.3, 0.5, 0.75, 1, 1.5, 2, 3, 5, 10))
 MATCH_OUTCOMES = Counter("doppelganger_match_total", "/match requests by outcome", ["outcome"])
+KEY_CHECKS = Counter("doppelganger_api_key_checks_total", "API key checks on /match", ["result"])
+for _r in ("valid", "invalid"):
+    KEY_CHECKS.labels(_r)
 TOP_STRENGTH = Histogram("doppelganger_top_match_strength", "Calibrated match strength of the best match",
                          buckets=[i / 10 for i in range(1, 11)])
 state = {"index": None, "embedder": None}
@@ -131,8 +139,14 @@ def readyz():
 
 @app.post("/match")
 async def match(request: Request):
-    if API_KEY and request.headers.get("x-api-key") != API_KEY:
-        return error("unauthorized", 401)
+    if API_KEY:
+        # constant-time comparison, so response timing doesn't leak how much of a guess was right
+        valid = hmac.compare_digest(request.headers.get("x-api-key", ""), API_KEY)
+        KEY_CHECKS.labels("valid" if valid else "invalid").inc()
+        if not valid:
+            if API_KEY_MODE == "enforce":
+                return error("unauthorized", 401)
+            log.warning("request without a valid API key (report mode: allowed)")
     # base64 inflates by 4/3; reject oversized bodies before reading them into memory
     length = int(request.headers.get("content-length") or 0)
     if length > MAX_IMAGE_BYTES * 4 // 3 + 1024:

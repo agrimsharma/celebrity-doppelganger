@@ -34,7 +34,8 @@ image = (
         "providers=['CPUExecutionProvider']).prepare(ctx_id=-1, det_size=(320, 320))\""
     )
     # `modal volume put doppelganger-index data/deploy/index /` stores the files under /index
-    .env({"INDEX_DIR": "/vol/index", "MPLCONFIGDIR": "/tmp", "PYTHONPATH": "/root"})
+    .env({"INDEX_DIR": "/vol/index", "MPLCONFIGDIR": "/tmp", "PYTHONPATH": "/root",
+          "API_KEY_MODE": "enforce"})  # report: only log requests without the key; enforce: reject them
     .add_local_dir(str(ROOT / "backend"), "/root/backend", ignore=["tests", "__pycache__", "Dockerfile"])
 )
 
@@ -42,6 +43,9 @@ image = (
 @app.function(
     image=image,
     volumes={"/vol": index},
+    # API_KEY: the backend only answers requests carrying it (the Vercel proxy adds it as
+    # BACKEND_API_KEY); created by scripts/setup_api_key.sh
+    secrets=[modal.Secret.from_name("doppelganger-api-key")],
     cpu=2.0,  # ~0.5 s server-side per match (detect + embed + search over 140K faces)
     memory=2048,
     scaledown_window=SCALEDOWN_S,

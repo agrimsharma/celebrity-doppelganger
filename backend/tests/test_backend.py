@@ -162,6 +162,15 @@ def test_api_key_required_when_configured(client_with, monkeypatch):
     assert r.status_code == 200
 
 
+def test_api_key_report_mode_allows_but_counts(client_with, monkeypatch):
+    monkeypatch.setattr(app_module, "API_KEY", "s3cret")
+    monkeypatch.setattr(app_module, "API_KEY_MODE", "report")
+    with client_with(lambda q: (q, 0.9)) as client:
+        assert client.post("/match", json={"image": png_data_uri()}).status_code == 200  # no key: allowed
+        text = client.get("/metrics/").text
+    assert 'doppelganger_api_key_checks_total{result="invalid"}' in text
+
+
 def test_metrics_endpoint_counts_outcomes(client_with):
     with client_with(lambda q: (q, 0.9)) as client:
         client.post("/match", json={"image": png_data_uri()})

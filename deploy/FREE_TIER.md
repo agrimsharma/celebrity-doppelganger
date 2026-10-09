@@ -27,5 +27,9 @@ The first request after an idle period starts a container (~15-30 s); the page s
 
 1. vercel.com → **Continue with GitHub** (`agrimsharma`) → Hobby plan (free).
 2. **Add New → Project** → import `celebrity-doppelganger` → **Root Directory: `frontend`**.
-3. Environment variable `BACKEND_URL` = `https://<workspace>--doppelganger-api.modal.run/match`
+3. Environment variables:
+   - `BACKEND_URL` = `https://<workspace>--doppelganger-api.modal.run/match`
+   - `BACKEND_API_KEY` = the key from `./scripts/setup_api_key.sh` (it's copied to your clipboard and
+     saved on Modal; the backend then rejects any request without it). Set this and redeploy the
+     frontend *before* deploying the backend with the key, or the site gets 401s in between.
 4. **Deploy** → your permanent link is `https://<project>.vercel.app`.
