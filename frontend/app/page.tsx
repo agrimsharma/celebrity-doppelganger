@@ -163,7 +163,7 @@ export default function Home() {
       {/* a soft darkening at the edges, so the UI always has contrast against the scene */}
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_at_center,transparent_40%,rgba(4,6,12,0.55)_100%)]" />
 
-      <Header backend={backend} dim={phase !== "landing"} />
+      <Header backend={backend} dim={phase !== "landing"} wordmark={phase !== "landing"} />
 
       <AnimatePresence mode="wait">
         {phase === "landing" && (
@@ -217,7 +217,7 @@ export default function Home() {
 }
 
 // ----------------------------------------------------------------------------- header
-function Header({ backend, dim }: { backend: BackendStatus; dim: boolean }) {
+function Header({ backend, dim, wordmark }: { backend: BackendStatus; dim: boolean; wordmark: boolean }) {
   return (
     <motion.header
       initial={{ opacity: 0, y: -8 }}
@@ -225,7 +225,7 @@ function Header({ backend, dim }: { backend: BackendStatus; dim: boolean }) {
       transition={{ duration: 1.2, ease: EASE, delay: 0.2 }}
       className="fixed inset-x-0 top-0 z-20 flex items-center justify-between gap-4 px-5 py-5 sm:px-10"
     >
-      <span className="font-display text-lg tracking-[0.28em] text-ivory">DOPPELGÄNGER</span>
+      <span className={`font-display text-lg tracking-[0.28em] text-ivory transition-opacity duration-700 ${wordmark ? "opacity-100" : "opacity-0"}`}>DOPPELGÄNGER</span>
       <span className="eyebrow hidden md:block">139,845 faces · 36,310 people · ArcFace</span>
       <div className="flex items-center gap-5">
         <BackendStatusDot status={backend} />
@@ -270,112 +270,111 @@ function Landing({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0, transition: { duration: 0.6, ease: EASE } }}
-      className="pointer-events-none relative z-10 flex h-dvh flex-col justify-between px-5 pb-6 pt-24 sm:px-10 sm:pb-10"
+      className="pointer-events-none relative z-10 flex h-dvh flex-col justify-between px-5 pb-5 pt-20 md:grid md:grid-cols-[1fr_minmax(0,1.15fr)_1fr] md:items-center md:px-10 md:pb-0 md:pt-0"
     >
-      {/* the title, split around the head */}
-      <div className="flex flex-1 flex-col justify-start gap-1 md:flex-row md:items-center md:justify-between md:gap-0">
-        <Title text={["Every", "face"]} align="left" delay={0.35} />
-        <Title text={["has a", "double"]} align="right" delay={0.55} />
-      </div>
+      {/* a film poster: the title on the left, the head in the middle, the controls on the right */}
+      <Title delay={0.35} />
 
-      <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
-        <motion.section
-          initial={{ opacity: 0, y: 24 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 1.1, ease: EASE, delay: 0.75 }}
-          className="glass pointer-events-auto w-full max-w-md rounded-2xl p-5 sm:p-6"
+      <div className="hidden md:block" aria-hidden />
+
+      <motion.section
+        initial={{ opacity: 0, y: 24 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 1.1, ease: EASE, delay: 0.75 }}
+        className="glass pointer-events-auto mx-auto mt-auto flex w-full max-w-sm flex-col items-center gap-4 rounded-2xl p-5 md:mr-0 md:mt-0 md:max-w-[19rem] md:gap-5 md:p-6"
+      >
+        <button
+          onClick={onPick}
+          className="group relative hidden h-28 w-28 shrink-0 items-center justify-center overflow-hidden rounded-full border border-dashed border-ivory/25 bg-white/[0.03] transition-colors hover:border-ivory/50 md:flex"
+          aria-label={preview ? "Change photo" : "Choose a photo"}
         >
-          <p className="eyebrow">No. 01 — Find yours</p>
-          <p className="mt-3 text-sm leading-relaxed text-ivory/80">
-            Upload a photo or take a selfie. We compare your face with 139,845 celebrity portraits,
-            then walk you through the gallery to your three closest matches.
-          </p>
+          {preview ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={preview} alt="Your photo" className="h-full w-full object-cover" />
+          ) : (
+            <span className="font-display text-4xl font-light text-ivory/40 transition-colors group-hover:text-ivory">+</span>
+          )}
+        </button>
 
-          <div className="mt-5 flex items-center gap-3">
-            <button
-              onClick={onPick}
-              className="group relative h-14 w-14 shrink-0 overflow-hidden rounded-full border border-ivory/20 bg-white/5"
-              aria-label={preview ? "Change photo" : "Choose a photo"}
-            >
-              {preview ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={preview} alt="Your photo" className="h-full w-full object-cover" />
-              ) : (
-                <span className="text-xl text-ivory/50 transition-colors group-hover:text-ivory">+</span>
-              )}
-            </button>
-            <button onClick={onPick} className="btn-quiet rounded-full px-4 py-2.5 text-sm">
-              {preview ? "Change photo" : "Upload photo"}
-            </button>
-            {canUseCamera && (
-              <button onClick={onCamera} className="btn-quiet inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-sm">
-                <CameraIcon /> Camera
-              </button>
-            )}
-          </div>
-
-          <button
-            onClick={onFind}
-            disabled={!fileChosen}
-            className="btn-primary mt-5 w-full rounded-full px-6 py-3.5 text-sm font-semibold tracking-wide"
-          >
-            Find my doppelgänger →
+        <div className="flex w-full items-center gap-2">
+          {preview && (
+            // on phones the preview sits inline, to keep the panel short
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={preview} alt="" className="h-10 w-10 shrink-0 rounded-full object-cover md:hidden" />
+          )}
+          <button onClick={onPick} className="btn-quiet flex-1 whitespace-nowrap rounded-full px-3 py-2.5 text-sm">
+            {preview ? "Change photo" : "Upload photo"}
           </button>
+          {canUseCamera && (
+            <button onClick={onCamera} className="btn-quiet inline-flex flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-full px-3 py-2.5 text-sm">
+              <CameraIcon /> Camera
+            </button>
+          )}
+        </div>
 
-          <AnimatePresence>
-            {error && (
-              <motion.p
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: "auto" }}
-                exit={{ opacity: 0, height: 0 }}
-                className="mt-4 rounded-lg border border-red-300/20 bg-red-400/10 px-4 py-3 text-sm text-red-100"
-                role="alert"
-              >
-                {error}
-              </motion.p>
-            )}
-          </AnimatePresence>
-        </motion.section>
-
-        <motion.aside
-          initial={{ opacity: 0, y: 24 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 1.1, ease: EASE, delay: 0.95 }}
-          className="pointer-events-auto hidden max-w-xs text-right md:block"
+        <button
+          onClick={onFind}
+          disabled={!fileChosen}
+          className="btn-primary w-full rounded-full px-6 py-3.5 text-sm font-semibold tracking-wide"
         >
-          <p className="eyebrow">How it works</p>
-          <p className="mt-3 text-xs leading-relaxed text-ivory/60">
-            Your face becomes 512 numbers (ArcFace), compared against every face in the index in
-            about 24 ms. Match strength is calibrated against 4,252 people who aren&apos;t famous.
-          </p>
-          <p className="mt-4 text-[0.65rem] leading-relaxed text-ivory/35">
-            Photos are processed in memory and never stored · IMDB-WIKI dataset, academic use ·
-            head scan: Lee Perry-Smith (Infinite Realities), CC BY 3.0
-          </p>
-        </motion.aside>
-      </div>
+          Find my doppelgänger →
+        </button>
+
+        <AnimatePresence>
+          {error && (
+            <motion.p
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              className="w-full rounded-lg border border-red-300/20 bg-red-400/10 px-4 py-3 text-sm text-red-100"
+              role="alert"
+            >
+              {error}
+            </motion.p>
+          )}
+        </AnimatePresence>
+      </motion.section>
+
+      <motion.p
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 1.2, delay: 1.1 }}
+        className="pointer-events-auto mt-4 text-center text-[0.62rem] leading-relaxed text-ivory/35 md:absolute md:inset-x-0 md:bottom-5 md:mt-0"
+      >
+        Photos are processed in memory and never stored · IMDB-WIKI, academic use · head scan: Lee
+        Perry-Smith (Infinite Realities), CC BY 3.0
+      </motion.p>
     </motion.main>
   );
 }
 
-function Title({ text, align, delay }: { text: string[]; align: "left" | "right"; delay: number }) {
+function Title({ delay }: { delay: number }) {
+  const lines: [string, boolean][] = [["Doppel", false], ["gänger", true]];
   return (
-    <h1
-      className={`font-display text-[clamp(2.2rem,8.5vw,7.5rem)] font-light uppercase leading-[0.86] tracking-[0.01em] text-ivory ${align === "right" ? "self-end text-right" : ""}`}
-    >
-      {text.map((word, i) => (
-        <span key={word} className="block overflow-hidden">
-          <motion.span
-            className="block"
-            initial={{ y: "105%" }}
-            animate={{ y: 0 }}
-            transition={{ duration: 1.3, ease: EASE, delay: delay + i * 0.12 }}
-          >
-            {i === 1 && align === "left" ? <em className="font-normal italic">{word}</em> : word}
-          </motion.span>
-        </span>
-      ))}
-    </h1>
+    <div className="text-center md:text-left">
+      <h1 className="font-display text-[clamp(3.6rem,8.2vw,8.75rem)] font-light leading-[0.86] tracking-[0.005em] text-ivory">
+        {lines.map(([word, italic], i) => (
+          <span key={word} className="block overflow-hidden pb-[0.06em]">
+            <motion.span
+              className={`block ${italic ? "italic md:pl-[0.5em]" : ""}`}
+              initial={{ y: "105%" }}
+              animate={{ y: 0 }}
+              transition={{ duration: 1.3, ease: EASE, delay: delay + i * 0.12 }}
+            >
+              {word}
+            </motion.span>
+          </span>
+        ))}
+      </h1>
+      <motion.p
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 1.2, delay: delay + 0.6 }}
+        className="eyebrow mt-4 md:mt-6"
+      >
+        Every face has a double
+      </motion.p>
+    </div>
   );
 }
 
