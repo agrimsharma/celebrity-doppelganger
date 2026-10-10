@@ -354,7 +354,7 @@ function Title({ delay }: { delay: number }) {
     <div className="text-center md:text-left">
       <h1 className="font-display text-[clamp(3.6rem,8.2vw,8.75rem)] font-light leading-[0.86] tracking-[0.005em] text-ivory">
         {lines.map(([word, italic], i) => (
-          <span key={word} className="block overflow-hidden pb-[0.06em]">
+          <span key={word} className="-mb-[0.22em] block overflow-hidden pb-[0.22em]">
             <motion.span
               className={`block ${italic ? "italic md:pl-[0.5em]" : ""}`}
               initial={{ y: "105%" }}
@@ -370,7 +370,7 @@ function Title({ delay }: { delay: number }) {
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ duration: 1.2, delay: delay + 0.6 }}
-        className="eyebrow mt-4 md:mt-6"
+        className="eyebrow mt-6 md:mt-9"
       >
         Every face has a double
       </motion.p>
