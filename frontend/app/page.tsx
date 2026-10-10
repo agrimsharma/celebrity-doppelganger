@@ -142,7 +142,7 @@ export default function Home() {
       } else {
         setMatches(data.matches);
         if (webgl) {
-          stage.current?.showResults(data.matches.map((m) => m.thumbnail), () => setPhase("results"));
+          stage.current?.showResults(data.matches.map((m) => m.thumbnail), preview, () => setPhase("results"));
         } else {
           setPhase("results");
         }
@@ -434,23 +434,39 @@ function Results({
       </motion.h2>
 
       {frames ? (
-        // plaques under the frames on the wall
-        matches.slice(0, 3).map((m, rank) => {
-          const f = frames[rank];
-          if (!f) return null;
-          return (
-            <motion.div
-              key={m.name + rank}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.9, ease: EASE, delay: 0.15 + rank * 0.18 }}
-              style={{ left: f.x + f.width / 2, top: f.y + f.height + 18 }}
-              className="pointer-events-none absolute w-max max-w-[30vw] -translate-x-1/2 text-center"
+        <>
+          {/* the best match sits above you: its plaque goes beside it; the others' below */}
+          {matches.slice(0, 3).map((m, rank) => {
+            const f = frames[rank];
+            if (!f) return null;
+            const beside = rank === 0;
+            return (
+              <motion.div
+                key={m.name + rank}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.9, ease: EASE, delay: 0.15 + rank * 0.18 }}
+                style={beside
+                  ? { left: f.x + f.width + 22, top: f.y + f.height / 2 }
+                  : { left: f.x + f.width / 2, top: f.y + f.height + 22 }}
+                className={`pointer-events-none absolute w-max max-w-[30vw] ${beside ? "-translate-y-1/2 text-left" : "-translate-x-1/2 text-center"}`}
+              >
+                <Plaque match={m} rank={rank} align={beside ? "start" : "center"} />
+              </motion.div>
+            );
+          })}
+          {frames[3] && (
+            <motion.span
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.9, ease: EASE }}
+              style={{ left: frames[3].x + frames[3].width / 2, top: frames[3].y + frames[3].height + 12 }}
+              className="eyebrow pointer-events-none absolute -translate-x-1/2 text-ivory/70"
             >
-              <Plaque match={m} rank={rank} />
-            </motion.div>
-          );
-        })
+              You
+            </motion.span>
+          )}
+        </>
       ) : (
         // no WebGL: the same results as plain cards
         <div className="absolute inset-x-0 top-40 flex flex-wrap items-start justify-center gap-6 px-6">
@@ -468,7 +484,7 @@ function Results({
         </div>
       )}
 
-      {preview && (
+      {preview && !frames && (
         <motion.figure
           initial={{ opacity: 0, x: -16 }}
           animate={{ opacity: 1, x: 0 }}
@@ -499,9 +515,9 @@ function Results({
   );
 }
 
-function Plaque({ match, rank }: { match: Match; rank: number }) {
+function Plaque({ match, rank, align = "center" }: { match: Match; rank: number; align?: "start" | "center" }) {
   return (
-    <div className="flex flex-col items-center gap-1">
+    <div className={`flex flex-col gap-1 ${align === "start" ? "items-start" : "items-center"}`}>
       <span className="eyebrow text-brass/90">{RANK_LABEL[rank] ?? `No. ${rank + 1}`}</span>
       <span className={`font-display font-normal leading-tight text-ivory ${rank === 0 ? "text-2xl sm:text-3xl" : "text-lg sm:text-xl"}`}>
         {match.name}

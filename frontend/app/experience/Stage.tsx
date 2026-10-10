@@ -7,7 +7,7 @@ import type { FrameRect } from "./engine";
 export type { FrameRect };
 export type StageHandle = {
   startSearch: () => void;
-  showResults: (thumbnails: (string | null)[], onArrived: () => void) => void;
+  showResults: (thumbnails: (string | null)[], userPhoto: string | null, onArrived: () => void) => void;
   back: (onDone?: () => void) => void;
 };
 
@@ -41,7 +41,7 @@ export default function Stage({
 
   useImperativeHandle(ref, () => ({
     startSearch: () => withEngine((e) => e.startSearch()),
-    showResults: (thumbs, onArrived) => withEngine((e) => e.showResults(thumbs, onArrived)),
+    showResults: (thumbs, userPhoto, onArrived) => withEngine((e) => e.showResults(thumbs, userPhoto, onArrived)),
     back: (onDone) => {
       if (engineRef.current) engineRef.current.back(onDone);
       else onDone?.();
