@@ -4,20 +4,20 @@ Upload a photo or take a live selfie, and find your three closest celebrity look
 
 **Live demo: [celebrity-doppelganger.vercel.app](https://celebrity-doppelganger.vercel.app)** (free hosting, so the first request after a quiet spell takes ~20 s while the model wakes up)
 
-<p align="center"><img src="docs/screenshots/app-results.jpg" width="820" alt="Results: the three closest celebrity matches resolved inside frames of light, with name and match strength"></p>
+<p align="center"><img src="docs/screenshots/app-results.jpg" width="820" alt="Results: your photo in the centre, the three closest celebrity matches around it in frames of light, with name and match strength"></p>
 
 The app detects the face, embeds it with ArcFace, and runs a cosine search over the index. The score is shown as a **match strength**: a percentile calibrated against how well thousands of people who *aren't* celebrities match.
 
 **The interface is a short film:**
-- **Landing:** a head made of 16,000 points of light turns to follow your cursor.
-- **On Find:** it disperses past the camera, and you glide through a gallery of light (portraits drawn in dots, floating in the dark) while the search runs.
-- **The ending:** a cloud of particles assembles into your three matches, each point coloured from its photo, and the real photos resolve inside frames of light.
+- **Landing:** a poster layout. The title is on the left, the upload controls are on the right, and in the middle a head made of 16,000 points of light faces you and turns to follow your cursor.
+- **On Find:** the head disperses past the camera, and you glide at a steady speed through an endless gallery of light (portraits drawn in dots, floating in the dark) for as long as the search takes.
+- **The ending:** once the matches are in, the camera banks round to a composition that was out of sight. Your photo is in the centre, with your three matches in a triangle around it. Each assembles from a cloud of particles coloured from its photo, then the real photo resolves inside a frame of light.
 
 | | | |
 |---|---|---|
-| ![Landing: a head made of points of light](docs/screenshots/app-home.jpg) | ![The gallery of light](docs/screenshots/app-gallery.jpg) | ![The matches assembling from particles](docs/screenshots/app-assembling.jpg) |
+| ![Landing: the title, a head made of points of light, and the upload controls](docs/screenshots/app-home.jpg) | ![The gallery of light during the search](docs/screenshots/app-gallery.jpg) | ![The matches assembling from particles around your photo](docs/screenshots/app-assembling.jpg) |
 
-It's built in plain three.js (`frontend/app/experience/`), with a custom shader per element and a bloom, grain and vignette pass. It runs at 60 fps, loads after the page is usable, and has fallbacks for phones, reduced motion and browsers without WebGL.
+It's built in plain three.js (`frontend/app/experience/`), with a custom shader per element and a bloom, grain and vignette pass. It runs at 60 fps, loads after the page is usable, and has fallbacks for phones, reduced motion and browsers without WebGL. How it works and how the design evolved: [docs/INTERFACE.md](docs/INTERFACE.md). (Your photo is blurred in these screenshots.)
 
 What's in the repo:
 - **ML pipeline:** embedding 277k IMDB-WIKI photos on a rented GPU, duplicate and label-noise cleanup, leave-one-out retrieval evaluation, and score calibration against a real-face null distribution.
@@ -163,7 +163,7 @@ python scripts/package_index.py            # -> data/deploy/index/ (what the bac
 
 ```
 backend/            FastAPI matcher, calibration.json, Dockerfile, tests
-frontend/           Next.js 16 + React 19 + Tailwind v4 + Framer Motion, camera capture
+frontend/           Next.js 16 + React 19 + Tailwind v4 + Framer Motion, three.js experience, camera capture
 deploy/             free tier: Modal app + setup guide
 infra/terraform/    GKE: VPC, cluster, Artifact Registry, GCS, Workload Identity, GitHub federation
 infra/azure/        the same on AKS
@@ -173,7 +173,7 @@ infra/loadtest/     k6 script + in-cluster Job
 infra/local/        kind cluster
 scripts/            embedding, dedup, cleaning, evaluation, calibration, packaging
 notebooks/          Vast.ai GPU embedding notebook
-docs/               PRD, technical design, build plan, screenshots
+docs/               PRD, technical design, build plan, interface notes, screenshots
 reports/            evaluation + cleaning results (JSON)
 ```
 
