@@ -10,8 +10,8 @@ The app detects the face, embeds it with ArcFace, and runs a cosine search over 
 
 **The interface is a short film:**
 - **Landing:** a head made of 16,000 points of light turns to follow your cursor.
-- **On Find:** it disperses past the camera, and you glide through a dark museum of veiled portraits while the search runs.
-- **The ending:** spotlights reveal your three matches, framed on the end wall.
+- **On Find:** it disperses past the camera, and you glide through a gallery of light (portraits drawn in dots, floating in the dark) while the search runs.
+- **The ending:** a cloud of particles assembles into your three matches, each point coloured from its photo, and the real photos resolve inside frames of light.
 
 It's built in plain three.js (`frontend/app/experience/`), with a custom shader per element and a bloom, grain and vignette pass. It runs at 60 fps, loads after the page is usable, and has fallbacks for phones, reduced motion and browsers without WebGL.
 

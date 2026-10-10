@@ -1,12 +1,16 @@
 /**
- * The 3D experience: a particle head that watches the cursor, and a gallery the camera glides
- * through while a search runs, ending at a wall where three spotlights reveal the matches.
+ * The 3D experience, one continuous night-space world:
  *
- * Plain three.js, no React: page.tsx drives it through a handful of methods (startSearch,
- * showResults, back) and gets told when the camera arrives. One camera path (a Catmull-Rom curve)
- * runs from the head to the final wall; "where we are" is a single progress value 0..1 along it,
- * and everything else - the head bursting into light, the backdrop fading, the gallery revealing
- * itself through fog - is derived from that value, so the choreography can't fall out of sync.
+ *  1. A head of light (points sampled from a scan) that faces you and turns to follow the cursor.
+ *     The face is rigid; the dust it sheds lives in world space, so it trails off like smoke.
+ *  2. On Find the head disperses past the camera and we glide through a gallery of light:
+ *     portraits floating in the dark, drawn as dots inside thin frames of light.
+ *  3. At the end, a cloud of particles streams into three frames and assembles into the matches,
+ *     each point coloured from its photo, then the real photos resolve.
+ *
+ * Plain three.js; page.tsx drives it through startSearch / showResults / back. The camera rides one
+ * Catmull-Rom curve; "where we are" is a single progress value 0..1 along it, and the fades are
+ * derived from that value, so the choreography can't fall out of sync.
  */
 import * as THREE from "three";
 import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
@@ -14,27 +18,23 @@ import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
-import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 
 export type FrameRect = { x: number; y: number; width: number; height: number };
 
 const INK = new THREE.Color("#04060c");
-const BRASS = new THREE.Color("#b8925a");
-const WARM = new THREE.Color("#ffd9a8");
+const HEAD_SCALE = 1.36;
+const HISTORY = 32;            // head poses remembered for the dust...
+const HISTORY_STEP = 0.2;      // ...one every 0.2 s, so 6.4 s of trail
 
-// gallery geometry (world units ~ metres)
-const HALL_START = -7;
-const HALL_END = -39;
-const HALL_HALF_WIDTH = 3.2;
-const FLOOR_Y = -1.7;
-const CEIL_Y = 3.1;
-const WALL_Z = HALL_END + 0.05;
+// the final frames: square photos (the index thumbnails are 160 x 160)
+const WALL_Z = -31;
 const FINAL_FRAMES = [
-  { x: -2.15, y: 0.55, w: 1.15, h: 1.45 },
-  { x: 0, y: 0.75, w: 1.5, h: 1.9 },   // the best match: centre, larger, a little higher
-  { x: 2.15, y: 0.55, w: 1.15, h: 1.45 },
+  { x: -2.25, y: 0.5, s: 1.3 },
+  { x: 0, y: 0.68, s: 1.7 },     // the best match: centre, larger, a little higher
+  { x: 2.25, y: 0.5, s: 1.3 },
 ];
-const RESULT_ORDER = [1, 0, 2];        // matches[0] goes in the centre frame
+const RESULT_ORDER = [1, 0, 2];  // matches[0] goes in the centre frame
+const GRID = 72;                 // assembly points per frame side (72 x 72)
 
 const easeInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 const easeOut = (t: number) => 1 - Math.pow(1 - t, 3);
@@ -44,46 +44,7 @@ const smoothstep = (a: number, b: number, x: number) => {
 };
 
 // ------------------------------------------------------------------------------------- shaders
-const HEAD_VERT = /* glsl */ `
-attribute float aSeed;
-attribute float aDust;
-uniform float uTime, uBurst, uSize, uPixelRatio;
-varying vec3 vColor;
-varying float vAlpha;
-uniform vec3 uCool, uWarm;
-
-void main() {
-  vec3 p = position;
-  float alpha = 1.0;
-
-  // dust: some points drift off the shoulders and back of the head, like a thought dissolving
-  if (aDust > 0.5) {
-    float life = fract(uTime * (0.035 + 0.05 * aSeed) + aSeed * 13.0);
-    p += vec3(0.9, 0.25, -0.5) * life * (0.6 + aSeed)
-       + vec3(sin(uTime * 0.7 + aSeed * 40.0), cos(uTime * 0.5 + aSeed * 30.0), 0.0) * 0.05 * life;
-    alpha = sin(life * 3.14159) * 0.8;
-  }
-  // breathing shimmer
-  p += normal * 0.006 * sin(uTime * 1.6 + aSeed * 50.0);
-
-  // the burst when a search starts: the head blows apart toward and past the camera
-  vec3 away = normalize(p + vec3(0.0, 0.0, 0.35)) * (0.6 + aSeed);
-  p += away * uBurst * 2.6 + vec3(0.0, 0.0, 5.5 * aSeed) * uBurst * uBurst;
-  alpha *= 1.0 - smoothstep(0.55, 1.0, uBurst);
-
-  vec4 mv = modelViewMatrix * vec4(p, 1.0);
-  gl_Position = projectionMatrix * mv;
-  gl_PointSize = uSize * uPixelRatio * (0.55 + 0.9 * aSeed) / -mv.z;
-
-  // light the points by their surface normal: a soft key from upper left, a strong cool rim
-  vec3 n = normalize(normalMatrix * normal);
-  float key = max(dot(n, normalize(vec3(-0.45, 0.55, 0.7))), 0.0);
-  float rim = pow(1.0 - abs(n.z), 2.2);
-  float lum = 0.05 + 0.62 * key + 0.68 * rim;
-  vColor = mix(uCool, uWarm, key * 0.7) * lum;
-  vAlpha = alpha;
-}`;
-
+// shared by every point system: a soft round dot, additive
 const POINT_FRAG = /* glsl */ `
 varying vec3 vColor;
 varying float vAlpha;
@@ -93,9 +54,78 @@ void main() {
   gl_FragColor = vec4(vColor * a * vAlpha, 1.0);
 }`;
 
+const LIGHTING = /* glsl */ `
+vec3 lightPoint(vec3 n, vec3 cool, vec3 warm) {
+  // a soft warm key from the upper left, a strong cool rim
+  float key = max(dot(n, normalize(vec3(-0.45, 0.55, 0.7))), 0.0);
+  float rim = pow(1.0 - abs(n.z), 2.2);
+  return mix(cool, warm, key * 0.7) * (0.05 + 0.62 * key + 0.68 * rim);
+}`;
+
+// the face: rigid, rotates with the head
+const HEAD_VERT = /* glsl */ `
+attribute float aSeed;
+uniform float uTime, uBurst, uSize, uPixelRatio;
+uniform vec3 uCool, uWarm;
+varying vec3 vColor;
+varying float vAlpha;
+${LIGHTING}
+void main() {
+  vec3 p = position + normal * 0.006 * sin(uTime * 1.6 + aSeed * 50.0);   // breathing shimmer
+  // the burst: the head blows apart toward and past the camera
+  vec3 away = normalize(p + vec3(0.0, 0.0, 0.35)) * (0.6 + aSeed);
+  p += away * uBurst * 2.6 + vec3(0.0, 0.0, 5.5 * aSeed) * uBurst * uBurst;
+  vec4 mv = modelViewMatrix * vec4(p, 1.0);
+  gl_Position = projectionMatrix * mv;
+  gl_PointSize = uSize * uPixelRatio * (0.55 + 0.9 * aSeed) / -mv.z;
+  vColor = lightPoint(normalize(normalMatrix * normal), uCool, uWarm);
+  vAlpha = 1.0 - smoothstep(0.55, 1.0, uBurst);
+}`;
+
+// the dust: born on the face where the face *was* at its birth (pose history), then drifting in
+// world space - so turning the head leaves a trail of light instead of dragging the dust along
+const DUST_VERT = /* glsl */ `
+attribute float aSeed;
+uniform float uTime, uBurst, uSize, uPixelRatio, uScale;
+uniform vec3 uHeadPos, uCool, uWarm;
+uniform float uYaw[${HISTORY}];
+uniform float uPitch[${HISTORY}];
+varying vec3 vColor;
+varying float vAlpha;
+${LIGHTING}
+mat3 rotYX(float yaw, float pitch) {
+  float cy = cos(yaw), sy = sin(yaw), cx = cos(pitch), sx = sin(pitch);
+  mat3 ry = mat3(cy, 0.0, -sy,  0.0, 1.0, 0.0,  sy, 0.0, cy);
+  mat3 rx = mat3(1.0, 0.0, 0.0,  0.0, cx, sx,  0.0, -sx, cx);
+  return ry * rx;
+}
+void main() {
+  float life = 4.0 + 2.2 * aSeed;                                  // seconds
+  float age = mod(uTime + aSeed * 37.0, life);
+  float h = min(age / ${HISTORY_STEP.toFixed(2)}, ${(HISTORY - 1.001).toFixed(3)});
+  int i = int(floor(h));
+  float f = fract(h);
+  float yaw = mix(uYaw[i], uYaw[i + 1], f);
+  float pitch = mix(uPitch[i], uPitch[i + 1], f);
+  mat3 r = rotYX(yaw, pitch);
+  vec3 born = r * position * uScale;
+  vec3 n = r * normal;
+  // drift: out from the surface, lifted and carried right-and-back by a slow breeze, with a curl
+  float k = age / life;
+  vec3 drift = n * 0.5 * k + vec3(0.55, 0.32, -0.35) * k * k * 3.0
+             + vec3(sin(uTime * 0.6 + aSeed * 40.0), cos(uTime * 0.45 + aSeed * 30.0), sin(uTime * 0.5 + aSeed * 20.0)) * 0.06 * k;
+  vec3 p = uHeadPos + born + drift;
+  p += normalize(born + vec3(0.0, 0.0, 0.5)) * uBurst * 2.6 * (0.6 + aSeed);
+  vec4 mv = viewMatrix * vec4(p, 1.0);
+  gl_Position = projectionMatrix * mv;
+  gl_PointSize = uSize * uPixelRatio * (0.5 + 0.8 * aSeed) * (1.0 - 0.4 * k) / -mv.z;
+  vColor = lightPoint(normalize(mat3(viewMatrix) * n), uCool, uWarm) * (1.25 - 0.55 * k);
+  vAlpha = smoothstep(0.0, 0.08, k) * (1.0 - smoothstep(0.55, 1.0, k)) * (1.0 - smoothstep(0.4, 0.9, uBurst));
+}`;
+
 const STAR_VERT = /* glsl */ `
 attribute float aSeed;
-uniform float uTime, uPixelRatio, uFade;
+uniform float uTime, uPixelRatio;
 varying vec3 vColor;
 varying float vAlpha;
 void main() {
@@ -103,7 +133,7 @@ void main() {
   gl_Position = projectionMatrix * mv;
   gl_PointSize = (1.0 + 2.2 * aSeed * aSeed) * uPixelRatio;
   vColor = mix(vec3(0.62, 0.72, 1.0), vec3(1.0, 0.9, 0.78), aSeed);
-  vAlpha = (0.35 + 0.65 * (0.5 + 0.5 * sin(uTime * (0.6 + aSeed * 2.0) + aSeed * 90.0))) * uFade;
+  vAlpha = 0.35 + 0.65 * (0.5 + 0.5 * sin(uTime * (0.6 + aSeed * 2.0) + aSeed * 90.0));
 }`;
 
 const SKY_VERT = /* glsl */ `
@@ -116,7 +146,7 @@ void main() {
 // deep navy space with slow nebular haze and diagonal light shafts
 const SKY_FRAG = /* glsl */ `
 varying vec3 vDir;
-uniform float uTime, uFade;
+uniform float uTime;
 float hash(vec3 p) { return fract(sin(dot(p, vec3(17.1, 113.7, 41.3))) * 43758.5453); }
 float noise(vec3 p) {
   vec3 i = floor(p), f = fract(p);
@@ -130,57 +160,103 @@ void main() {
   float haze = fbm(d * 2.6 + vec3(uTime * 0.012, 0.0, uTime * 0.008));
   vec3 base = mix(vec3(0.006, 0.008, 0.02), vec3(0.018, 0.028, 0.075), smoothstep(-0.6, 0.7, d.y + haze * 0.5));
   base += vec3(0.04, 0.055, 0.15) * pow(haze, 2.6) * 0.8;
-  // shafts: soft diagonal bands drifting across the backdrop
   float band = d.x * 0.85 + d.y * 0.55 + 0.04 * sin(uTime * 0.07);
-  float shafts = pow(0.5 + 0.5 * sin(band * 7.0 + uTime * 0.05), 14.0) * smoothstep(0.2, -0.9, d.z);
+  float shafts = pow(0.5 + 0.5 * sin(band * 7.0 + uTime * 0.05), 14.0);
   base += vec3(0.035, 0.055, 0.14) * shafts * (0.5 + haze);
-  gl_FragColor = vec4(base * uFade, 1.0);
+  gl_FragColor = vec4(base, 1.0);
 }`;
 
-// a soft cone of light (spotlight beam), brightest at the lamp and fading toward the wall
-const BEAM_VERT = /* glsl */ `
+// a floating portrait: a faint silhouette drawn as a grid of glowing dots
+const PORTRAIT_VERT = /* glsl */ `
 varying vec2 vUv;
-varying vec3 vN;
-varying vec3 vView;
+varying float vDist;
 void main() {
   vUv = uv;
-  vN = normalize(normalMatrix * normal);
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
-  vView = normalize(-mv.xyz);
+  vDist = -mv.z;
   gl_Position = projectionMatrix * mv;
 }`;
-const BEAM_FRAG = /* glsl */ `
+const PORTRAIT_FRAG = /* glsl */ `
 varying vec2 vUv;
-varying vec3 vN;
-varying vec3 vView;
-uniform float uIntensity;
-uniform vec3 uColor;
+varying float vDist;
+uniform float uTime, uFade, uSeed;
+float hash(vec2 p) { return fract(sin(dot(p, vec2(41.3, 289.1))) * 43758.5453); }
+float ell(vec2 p, vec2 c, vec2 r) { vec2 q = (p - c) / r; return 1.0 - smoothstep(0.75, 1.0, dot(q, q)); }
 void main() {
-  float edge = pow(abs(dot(normalize(vN), normalize(vView))), 1.6);
-  float along = smoothstep(0.0, 0.15, vUv.y) * (0.25 + 0.75 * vUv.y);
-  gl_FragColor = vec4(uColor * edge * along * uIntensity * 0.11, 1.0);
+  vec2 cells = vec2(30.0, 39.0);
+  vec2 cell = floor(vUv * cells);
+  vec2 local = fract(vUv * cells) - 0.5;
+  vec2 c = (cell + 0.5) / cells;
+  float lean = (uSeed - 0.5) * 0.12;
+  float s = max(ell(c, vec2(0.5 + lean, 0.6), vec2(0.17 + uSeed * 0.04, 0.23)), ell(c, vec2(0.5, 0.02), vec2(0.44, 0.3)) * 0.8);
+  float h = hash(cell + uSeed * 17.0);
+  float tw = 0.65 + 0.35 * sin(uTime * (0.8 + h * 2.0) + h * 30.0);
+  float r = 0.1 + 0.28 * s * (0.5 + 0.5 * h);
+  float dotA = smoothstep(r, r * 0.4, length(local)) * (0.08 + 0.92 * s) * tw;
+  float near = smoothstep(30.0, 9.0, vDist);   // portraits brighten as we approach
+  vec3 col = mix(vec3(0.45, 0.58, 1.0), vec3(1.0, 0.92, 0.82), s * 0.5);
+  gl_FragColor = vec4(col * dotA * uFade * (0.25 + 0.75 * near), 1.0);
 }`;
+
+// the assembly: each point flies from a cloud to its pixel in a frame, coloured by the photo
+const ASSEMBLE_VERT = /* glsl */ `
+attribute vec3 aStart;
+attribute vec2 aUv;
+attribute float aFrame;
+attribute float aSeed;
+uniform float uTime, uSize, uPixelRatio, uOut;
+uniform vec3 uAssemble;           // progress per frame (x: left, y: centre, z: right)
+uniform vec3 uHasPhoto;
+uniform sampler2D uTex0, uTex1, uTex2;
+varying vec3 vColor;
+varying float vAlpha;
+void main() {
+  float a = aFrame < 0.5 ? uAssemble.x : (aFrame < 1.5 ? uAssemble.y : uAssemble.z);
+  float has = aFrame < 0.5 ? uHasPhoto.x : (aFrame < 1.5 ? uHasPhoto.y : uHasPhoto.z);
+  vec3 tex = aFrame < 0.5 ? texture2D(uTex0, aUv).rgb : (aFrame < 1.5 ? texture2D(uTex1, aUv).rgb : texture2D(uTex2, aUv).rgb);
+  // each point leaves at its own moment, so the image fills in like a wave
+  float t = clamp((a - aSeed * 0.45) / 0.55, 0.0, 1.0);
+  t = t * t * (3.0 - 2.0 * t);
+  // the waiting cloud swirls slowly around its centre
+  vec3 swirl = vec3(sin(uTime * 0.3 + aSeed * 30.0), cos(uTime * 0.25 + aSeed * 20.0), sin(uTime * 0.2 + aSeed * 50.0)) * 0.35;
+  vec3 from = aStart + swirl;
+  vec3 arc = vec3(0.0, sin(t * 3.14159) * (0.4 + aSeed), sin(t * 3.14159) * 0.8);   // a gentle arc in flight
+  vec3 p = mix(from, position, t) + arc * (1.0 - t * 0.5);
+  p += (aStart - position) * uOut * (0.6 + aSeed);                                   // on the way back: scatter
+  vec4 mv = modelViewMatrix * vec4(p, 1.0);
+  gl_Position = projectionMatrix * mv;
+  gl_PointSize = uSize * uPixelRatio * mix(0.9 + aSeed, 1.25, t) / -mv.z;
+  vec3 ghost = vec3(0.45, 0.58, 1.0) * (0.25 + 0.45 * aSeed);
+  vColor = mix(ghost, mix(ghost, tex * 0.75, has), t);
+  // once the photo has resolved underneath, the points step back to a faint shimmer
+  vAlpha = (0.3 + 0.45 * t) * (1.0 - uOut) * (1.0 - 0.88 * smoothstep(0.9, 1.0, a));
+}`;
+
+// a soft halo of light behind each final frame
+const HALO_FRAG = /* glsl */ `
+varying vec2 vUv;
+uniform float uIntensity;
+void main() {
+  float d = length(vUv - 0.5) * 2.0;
+  float a = pow(1.0 - smoothstep(0.0, 1.0, d), 2.2);
+  gl_FragColor = vec4(vec3(0.42, 0.55, 1.0) * a * uIntensity, 1.0);
+}`;
+const UV_VERT = /* glsl */ `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
 
 // film look: subtle chromatic aberration toward the edges, vignette and grain
 const FILM_SHADER = {
-  uniforms: {
-    tDiffuse: { value: null },
-    uTime: { value: 0 },
-    uVignette: { value: 1.0 },
-    uBlack: { value: 0 },
-  },
-  vertexShader: /* glsl */ `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+  uniforms: { tDiffuse: { value: null }, uTime: { value: 0 } },
+  vertexShader: UV_VERT,
   fragmentShader: /* glsl */ `
-    uniform sampler2D tDiffuse; uniform float uTime, uVignette, uBlack; varying vec2 vUv;
+    uniform sampler2D tDiffuse; uniform float uTime; varying vec2 vUv;
     float rand(vec2 c) { return fract(sin(dot(c, vec2(12.9898, 78.233))) * 43758.5453); }
     void main() {
       vec2 c = vUv - 0.5;
       float r2 = dot(c, c);
       vec2 off = c * r2 * 0.012;
       vec3 col = vec3(texture2D(tDiffuse, vUv + off).r, texture2D(tDiffuse, vUv).g, texture2D(tDiffuse, vUv - off).b);
-      col *= mix(1.0, smoothstep(0.85, 0.15, r2 * 2.2), uVignette);
+      col *= smoothstep(0.85, 0.15, r2 * 2.2);
       col += (rand(vUv * 1000.0 + fract(uTime)) - 0.5) * 0.035;
-      col *= 1.0 - uBlack;
       gl_FragColor = vec4(col, 1.0);
     }`,
 };
@@ -198,10 +274,16 @@ export default class Engine {
   private disposed = false;
 
   private head = new THREE.Group();
-  private gallery = new THREE.Group();
   private headMat?: THREE.ShaderMaterial;
+  private dustMat?: THREE.ShaderMaterial;
+  private yawHistory = new Float32Array(HISTORY);
+  private pitchHistory = new Float32Array(HISTORY);
+  private historyClock = 0;
   private starMat: THREE.ShaderMaterial;
   private skyMat: THREE.ShaderMaterial;
+  private portraitMats: THREE.ShaderMaterial[] = [];
+  private lineMats: THREE.LineBasicMaterial[] = [];
+  private portraitGroups: THREE.Group[] = [];
   private path: THREE.CatmullRomCurve3;
 
   private pointer = new THREE.Vector2();
@@ -210,11 +292,13 @@ export default class Engine {
   private tween: { from: number; to: number; start: number; duration: number; ease: (t: number) => number; done?: () => void } | null = null;
   private mode: "landing" | "searching" | "arriving" | "gallery" | "returning" = "landing";
 
-  private finalPaintings: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>[] = [];
-  private finalBeams: THREE.ShaderMaterial[] = [];
-  private finalSpots: THREE.SpotLight[] = [];
-  private lightsOn = [0, 0, 0];
-  private lightsTarget = [0, 0, 0];
+  private assembleMat!: THREE.ShaderMaterial;
+  private photos: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>[] = [];
+  private finalFrameMats: THREE.LineBasicMaterial[] = [];
+  private haloMats: THREE.ShaderMaterial[] = [];
+  private assemble = [0, 0, 0];
+  private assembleTarget = [0, 0, 0];
+  private outTarget = 0;
   private onLayout?: (rects: FrameRect[]) => void;
 
   private frameTimes: number[] = [];
@@ -229,25 +313,17 @@ export default class Engine {
     this.renderer.toneMappingExposure = 1.05;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-    this.scene.fog = new THREE.FogExp2(INK, 0.045);
-    const pmrem = new THREE.PMREMGenerator(this.renderer);
-    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    this.scene.environmentIntensity = 0.35;
-
-    // backdrop
     this.skyMat = new THREE.ShaderMaterial({
-      vertexShader: SKY_VERT, fragmentShader: SKY_FRAG, side: THREE.BackSide, depthWrite: false, fog: false,
-      uniforms: { uTime: { value: 0 }, uFade: { value: 1 } },
+      vertexShader: SKY_VERT, fragmentShader: SKY_FRAG, side: THREE.BackSide, depthWrite: false,
+      uniforms: { uTime: { value: 0 } },
     });
     this.scene.add(new THREE.Mesh(new THREE.SphereGeometry(120, 48, 24), this.skyMat));
     this.starMat = this.buildStars(opts.lowPower ? 1400 : 2600);
 
     this.scene.add(this.head);
-    this.head.position.set(0.35, 0, 0);
     this.buildGallery();
-
+    this.buildFinalFrames();
     this.path = this.buildPath(1.6);
-
 
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
@@ -268,38 +344,50 @@ export default class Engine {
     const count = this.opts.lowPower ? Math.min(total, 9000) : total;  // any prefix is an even subsample
     const pos16 = new Int16Array(buf, 4, total * 3);
     const nrm8 = new Int8Array(buf, 4 + total * 6, total * 3);
-    const position = new Float32Array(count * 3);
-    const normal = new Float32Array(count * 3);
-    const seed = new Float32Array(count);
-    const dust = new Float32Array(count);
+    const face: number[][] = [[], [], []];   // position, normal, seed
+    const dust: number[][] = [[], [], []];
     for (let i = 0; i < count; i++) {
-      for (let k = 0; k < 3; k++) {
-        position[i * 3 + k] = pos16[i * 3 + k] / 32767;
-        normal[i * 3 + k] = nrm8[i * 3 + k] / 127;
-      }
-      seed[i] = Math.random();
-      const y = position[i * 3 + 1], z = position[i * 3 + 2];
-      // the shoulders and the back of the skull dissolve; a few stray points everywhere
-      dust[i] = (y < -0.45 && Math.random() < 0.55) || (z < -0.25 && Math.random() < 0.25) || Math.random() < 0.04 ? 1 : 0;
+      const p = [pos16[i * 3] / 32767, pos16[i * 3 + 1] / 32767, pos16[i * 3 + 2] / 32767];
+      const n = [nrm8[i * 3] / 127, nrm8[i * 3 + 1] / 127, nrm8[i * 3 + 2] / 127];
+      // the shoulders and the back of the skull shed dust; a few stray points everywhere
+      const isDust = (p[1] < -0.45 && Math.random() < 0.5) || (p[2] < -0.25 && Math.random() < 0.3) || Math.random() < 0.07;
+      const into = isDust ? dust : face;
+      into[0].push(...p);
+      into[1].push(...n);
+      into[2].push(Math.random());
     }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.BufferAttribute(position, 3));
-    geo.setAttribute("normal", new THREE.BufferAttribute(normal, 3));
-    geo.setAttribute("aSeed", new THREE.BufferAttribute(seed, 1));
-    geo.setAttribute("aDust", new THREE.BufferAttribute(dust, 1));
+    const geometry = ([pos, nrm, seed]: number[][]) => {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+      geo.setAttribute("normal", new THREE.Float32BufferAttribute(nrm, 3));
+      geo.setAttribute("aSeed", new THREE.Float32BufferAttribute(seed, 1));
+      return geo;
+    };
+    const common = {
+      uTime: { value: 0 }, uBurst: { value: 0 }, uPixelRatio: { value: this.pixelRatio },
+      uSize: { value: this.opts.lowPower ? 20 : 15 },
+      uCool: { value: new THREE.Color("#8fb2ff") }, uWarm: { value: new THREE.Color("#ffe3c2") },
+    };
     this.headMat = new THREE.ShaderMaterial({
-      vertexShader: HEAD_VERT, fragmentShader: POINT_FRAG,
-      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false,
-      uniforms: {
-        uTime: { value: 0 }, uBurst: { value: 0 }, uSize: { value: this.opts.lowPower ? 20 : 15 },
-        uPixelRatio: { value: this.pixelRatio },
-        uCool: { value: new THREE.Color("#8fb2ff") }, uWarm: { value: new THREE.Color("#ffe3c2") },
-      },
+      vertexShader: HEAD_VERT, fragmentShader: POINT_FRAG, uniforms: THREE.UniformsUtils.clone(common),
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
     });
-    const pts = new THREE.Points(geo, this.headMat);
-    pts.scale.setScalar(1.36);
-    pts.rotation.y = -0.6;  // three-quarter view: the face looks a little to the left of the page
-    this.head.add(pts);
+    const facePts = new THREE.Points(geometry(face), this.headMat);
+    facePts.scale.setScalar(HEAD_SCALE);
+    this.head.add(facePts);
+
+    this.dustMat = new THREE.ShaderMaterial({
+      vertexShader: DUST_VERT, fragmentShader: POINT_FRAG,
+      uniforms: {
+        ...THREE.UniformsUtils.clone(common),
+        uScale: { value: HEAD_SCALE }, uHeadPos: { value: new THREE.Vector3() },
+        uYaw: { value: this.yawHistory }, uPitch: { value: this.pitchHistory },
+      },
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    });
+    const dustPts = new THREE.Points(geometry(dust), this.dustMat);
+    dustPts.frustumCulled = false;   // positions are computed in the shader, in world space
+    this.scene.add(dustPts);
   }
 
   start() {
@@ -319,46 +407,52 @@ export default class Engine {
     this.onLayout = fn;
   }
 
-  /** Fly from the head into the gallery and keep walking while the search runs. */
+  /** Disperse the head and glide through the gallery while the search runs. */
   startSearch() {
     this.mode = "searching";
-    this.lightsTarget = [0, 0, 0];
+    this.assembleTarget = [0, 0, 0];
+    this.outTarget = 0;
     if (this.opts.reducedMotion) {
       this.progress = 0.8;
       return;
     }
-    this.animateTo(0.62, 4.6, easeInOut);
+    this.animateTo(0.66, 5.2, easeInOut);
   }
 
-  /** Put the matches in the frames, walk to the wall and light them one by one. */
+  /** Glide to the final frames and assemble the matches out of the particle cloud. */
   showResults(thumbnails: (string | null)[], onArrived: () => void) {
-    this.setPaintings(thumbnails);
+    this.setPhotos(thumbnails);
     this.mode = "arriving";
     const arrive = () => {
       this.mode = "gallery";
       RESULT_ORDER.forEach((frame, rank) => {
-        window.setTimeout(() => (this.lightsTarget[frame] = 1), this.opts.reducedMotion ? 0 : 250 + rank * 420);
+        window.setTimeout(() => (this.assembleTarget[frame] = 1), this.opts.reducedMotion ? 0 : rank * 380);
       });
       window.setTimeout(() => {
         onArrived();
         this.emitLayout();
-      }, this.opts.reducedMotion ? 0 : 1250);
+      }, this.opts.reducedMotion ? 0 : 1700);
     };
     if (this.opts.reducedMotion) {
       this.progress = 1;
+      this.assemble = [1, 1, 1];
       arrive();
       return;
     }
     const remaining = 1 - this.progress;
-    this.animateTo(1, 1.4 + remaining * 4.2, easeOut, arrive);
+    this.animateTo(1, 1.6 + remaining * 4.5, easeOut, arrive);
   }
 
   /** Back to the head (after results, or when a search fails). */
   back(onDone?: () => void) {
     this.mode = "returning";
-    this.lightsTarget = [0, 0, 0];
+    this.outTarget = this.assemble.some((a) => a > 0.01) ? 1 : 0;
     const done = () => {
       this.mode = "landing";
+      this.assemble = [0, 0, 0];
+      this.assembleTarget = [0, 0, 0];
+      this.outTarget = 0;
+      this.assembleMat.uniforms.uOut.value = 0;
       onDone?.();
     };
     if (this.opts.reducedMotion) {
@@ -366,7 +460,7 @@ export default class Engine {
       done();
       return;
     }
-    this.animateTo(0, 1.6 + this.progress * 2.4, easeInOut, done);
+    this.animateTo(0, 1.8 + this.progress * 2.4, easeInOut, done);
   }
 
   resize() {
@@ -374,11 +468,9 @@ export default class Engine {
     this.renderer.setSize(w, h, false);
     this.composer.setSize(w, h);  // also sizes the bloom pass's internal targets
     this.camera.aspect = w / h;
-    // keep the head comfortably framed on portrait screens
     this.camera.fov = w / h < 0.8 ? 52 : 36;
     this.camera.updateProjectionMatrix();
     this.path = this.buildPath(w / h);
-    this.head.position.x = w / h < 0.8 ? 0 : 0.35;
     if (this.mode === "gallery") this.emitLayout();
   }
 
@@ -417,74 +509,99 @@ export default class Engine {
         done?.();
       }
     } else if (this.mode === "searching" && !this.opts.reducedMotion) {
-      // still waiting for the answer (e.g. a cold start): keep strolling, ever more slowly
-      this.progress += (0.84 - this.progress) * dt * 0.05;
+      // still waiting for the answer (e.g. a cold start): keep drifting, ever more slowly
+      this.progress += (0.86 - this.progress) * dt * 0.05;
     }
 
-    // the head watches the cursor (only while we're facing it)
+    // the head faces you and turns toward the cursor (only while we're facing it)
     const facing = 1 - smoothstep(0.02, 0.12, this.progress);
     const damp = 1 - Math.exp(-dt * 3.2);
     this.look.x += (this.pointer.x * facing - this.look.x) * damp;
     this.look.y += (this.pointer.y * facing - this.look.y) * damp;
-    if (!this.opts.reducedMotion) {
-      this.head.rotation.y = this.look.x * 0.6;
-      this.head.rotation.x = -this.look.y * 0.28;
-      this.head.position.y = Math.sin(t * 0.5) * 0.03;
-    }
+    const yaw = this.opts.reducedMotion ? 0 : this.look.x * 0.62;
+    const pitch = this.opts.reducedMotion ? 0 : -this.look.y * 0.3;
+    this.head.rotation.set(pitch, yaw, 0, "YXZ");
+    this.head.position.y = this.opts.reducedMotion ? 0 : Math.sin(t * 0.5) * 0.03;
+    this.recordPose(yaw, pitch, dt);
 
     const burst = smoothstep(0.03, 0.2, this.progress);
-    if (this.headMat) {
-      this.headMat.uniforms.uTime.value = this.opts.reducedMotion ? 4 : t;
-      this.headMat.uniforms.uBurst.value = burst;
+    const time = this.opts.reducedMotion ? 4 : t;
+    for (const mat of [this.headMat, this.dustMat]) {
+      if (!mat) continue;
+      mat.uniforms.uTime.value = time;
+      mat.uniforms.uBurst.value = burst;
     }
+    this.dustMat?.uniforms.uHeadPos.value.copy(this.head.position);
     this.head.visible = burst < 0.999;
-    // the cut: a moment of darkness between space and the gallery, which appears during it
-    const black = smoothstep(0.16, 0.26, this.progress) * (1 - smoothstep(0.3, 0.38, this.progress));
-    this.film.uniforms.uBlack.value = this.opts.reducedMotion ? 0 : black;
-    this.gallery.visible = this.progress > 0.27;
-    // starlight wants a generous bloom; lit paintings want almost none
-    const inside = smoothstep(0.3, 0.5, this.progress);
-    this.bloom.strength = 0.6 - 0.38 * inside;
-    this.bloom.threshold = 0.22 + 0.4 * inside;
     this.skyMat.uniforms.uTime.value = t;
-    this.skyMat.uniforms.uFade.value = 1 - 0.75 * smoothstep(0.15, 0.4, this.progress);
     this.starMat.uniforms.uTime.value = t;
-    this.starMat.uniforms.uFade.value = 1 - 0.6 * smoothstep(0.2, 0.45, this.progress);
-    (this.scene.fog as THREE.FogExp2).density = 0.045 - 0.022 * smoothstep(0.3, 0.9, this.progress);
 
+    // the gallery fades in as the head disperses
+    const gallery = smoothstep(0.08, 0.3, this.progress);
+    this.portraitMats.forEach((m) => {
+      m.uniforms.uTime.value = t;
+      m.uniforms.uFade.value = gallery;
+    });
+    // like haze: a portrait's outline only brightens as we approach it
+    this.lineMats.forEach((m, i) => {
+      const dist = this.camera.position.distanceTo(this.portraitGroups[i].position);
+      m.opacity = 0.6 * gallery * smoothstep(22, 7, dist);
+    });
+    const finalVis = smoothstep(0.45, 0.85, this.progress);
+    this.finalFrameMats.forEach((m, i) => (m.opacity = finalVis * (0.35 + 0.65 * this.assemble[i])));
+    this.haloMats.forEach((m, i) => (m.uniforms.uIntensity.value = finalVis * (0.06 + 0.22 * this.assemble[i])));
+
+    // assembling: each frame's points fly in; the photo resolves once they've landed
     for (let i = 0; i < 3; i++) {
-      this.lightsOn[i] += (this.lightsTarget[i] - this.lightsOn[i]) * (1 - Math.exp(-dt * (this.lightsTarget[i] ? 2.4 : 6)));
-      const on = this.lightsOn[i];
-      // a little flicker as each lamp warms up
-      const flicker = on < 0.98 && on > 0.05 ? 0.85 + 0.15 * Math.sin(t * 40 + i) : 1;
-      this.finalBeams[i].uniforms.uIntensity.value = on * flicker;
-      this.finalSpots[i].intensity = on * flicker * 7;
-      this.finalPaintings[i].material.color.setScalar(0.04 + 0.7 * on * flicker);
+      const target = this.assembleTarget[i];
+      this.assemble[i] += (target - this.assemble[i]) * (1 - Math.exp(-dt * (target ? 1.15 : 3)));
+      const resolve = smoothstep(0.82, 1.0, this.assemble[i]) * (1 - this.assembleMat.uniforms.uOut.value);
+      this.photos[i].material.opacity = resolve * 0.92;
+      this.photos[i].visible = resolve > 0.001;
     }
+    const u = this.assembleMat.uniforms;
+    u.uTime.value = t;
+    u.uAssemble.value.set(this.assemble[0], this.assemble[1], this.assemble[2]);
+    u.uOut.value += (this.outTarget - u.uOut.value) * (1 - Math.exp(-dt * 2.5));
+    // the waiting cloud only shows near the end of the glide
+    (this.assembleMat as THREE.ShaderMaterial).visible = finalVis > 0.01;
+
+    // starlight wants a generous bloom; the resolved photos want almost none
+    const resolved = Math.max(...this.assemble.map((a) => smoothstep(0.8, 1, a)));
+    this.bloom.strength = 0.6 - 0.3 * resolved;
+    this.bloom.threshold = 0.22 + 0.45 * resolved;
 
     this.placeCamera(this.progress);
     this.film.uniforms.uTime.value = t;
     this.composer.render(dt);
   }
 
+  /** Remember the head's pose every HISTORY_STEP seconds (index 0 = now) for the dust trail. */
+  private recordPose(yaw: number, pitch: number, dt: number) {
+    this.historyClock += dt;
+    if (this.historyClock >= HISTORY_STEP) {
+      this.historyClock %= HISTORY_STEP;
+      this.yawHistory.copyWithin(1, 0, HISTORY - 1);
+      this.pitchHistory.copyWithin(1, 0, HISTORY - 1);
+    }
+    this.yawHistory[0] = yaw;
+    this.pitchHistory[0] = pitch;
+  }
+
   /** The camera path; its last point is set back far enough that all three frames fit the screen. */
   private buildPath(aspect: number) {
     const halfFov = THREE.MathUtils.degToRad(this.camera.fov / 2);
-    const halfWidth = 3.05;   // the three frames plus a margin
-    const halfHeight = 1.9;   // frames, title above and plaques below
-    const fitWidth = halfWidth / (Math.tan(halfFov) * aspect);
-    const fitHeight = halfHeight / Math.tan(halfFov);
+    const fitWidth = 3.4 / (Math.tan(halfFov) * aspect);   // the three frames plus a margin
+    const fitHeight = 1.9 / Math.tan(halfFov);             // frames, title above, plaques below
     const back = Math.min(Math.max(fitWidth, fitHeight, 7.4), 14);
     const finalZ = WALL_Z + back;
     const route = [
       new THREE.Vector3(0, 0.15, 6.4),
       new THREE.Vector3(0, 0.12, 2.2),
-      new THREE.Vector3(0.05, 0.12, -2.5),
-      new THREE.Vector3(0, 0.25, HALL_START - 1.5),   // through the dark, into the hall
-      new THREE.Vector3(-0.7, 0.35, HALL_START - 9),
-      new THREE.Vector3(0.7, 0.4, HALL_START - 16),
-      new THREE.Vector3(0, 0.5, HALL_START - 21.5),
-    ].filter((v) => v.z > finalZ + 2);  // a stop set further back (narrow screens) cuts the route short
+      new THREE.Vector3(0.1, 0.15, -3),
+      new THREE.Vector3(-0.6, 0.3, -9),
+      new THREE.Vector3(0.6, 0.42, -15),
+    ].filter((v) => v.z > finalZ + 2);   // a stop set further back (narrow screens) cuts the route short
     return new THREE.CatmullRomCurve3([...route, new THREE.Vector3(0, 0.55, finalZ)], false, "centripetal");
   }
 
@@ -492,14 +609,13 @@ export default class Engine {
     const pos = this.path.getPointAt(p);
     this.camera.position.copy(pos);
     const ahead = this.path.getPointAt(Math.min(p + 0.035, 1));
-    const wall = new THREE.Vector3(0, 0.62, WALL_Z);
-    const head = new THREE.Vector3(this.head.position.x * 0.4, 0.1, 0);
+    const wall = new THREE.Vector3(0, 0.6, WALL_Z);
+    const head = new THREE.Vector3(0, 0.1, 0);
     const target = ahead.clone();
     target.lerp(head, 1 - smoothstep(0.0, 0.08, p));
-    target.lerp(wall, smoothstep(0.82, 1.0, p));
-    // a slow handheld drift, so even a still camera feels alive
+    target.lerp(wall, smoothstep(0.8, 1.0, p));
     const t = this.clock.elapsedTime;
-    if (!this.opts.reducedMotion) {
+    if (!this.opts.reducedMotion) {   // a slow handheld drift, so even a still camera feels alive
       this.camera.position.x += Math.sin(t * 0.31) * 0.025;
       this.camera.position.y += Math.sin(t * 0.43) * 0.02;
     }
@@ -516,8 +632,9 @@ export default class Engine {
       this.pixelRatio = 1;
       this.renderer.setPixelRatio(1);
       this.composer.setPixelRatio(1);
-      if (this.headMat) this.headMat.uniforms.uPixelRatio.value = 1;
-      this.starMat.uniforms.uPixelRatio.value = 1;
+      for (const m of [this.headMat, this.dustMat, this.starMat, this.assembleMat]) {
+        if (m) m.uniforms.uPixelRatio.value = 1;
+      }
       this.resize();
     }
   }
@@ -527,12 +644,13 @@ export default class Engine {
     const w = window.innerWidth, h = window.innerHeight;
     const cam = this.camera.clone();
     cam.position.copy(this.path.getPointAt(1));
-    cam.lookAt(0, 0.62, WALL_Z);
+    cam.lookAt(0, 0.6, WALL_Z);
     cam.updateMatrixWorld();
     const rects = RESULT_ORDER.map((frame) => {
       const f = FINAL_FRAMES[frame];
-      const a = new THREE.Vector3(f.x - f.w / 2, f.y + f.h / 2, WALL_Z).project(cam);
-      const b = new THREE.Vector3(f.x + f.w / 2, f.y - f.h / 2, WALL_Z).project(cam);
+      const half = f.s / 2 + 0.08;
+      const a = new THREE.Vector3(f.x - half, f.y + half, WALL_Z).project(cam);
+      const b = new THREE.Vector3(f.x + half, f.y - half, WALL_Z).project(cam);
       const x0 = (a.x + 1) / 2 * w, y0 = (1 - a.y) / 2 * h, x1 = (b.x + 1) / 2 * w, y1 = (1 - b.y) / 2 * h;
       return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
     });
@@ -554,224 +672,158 @@ export default class Engine {
     geo.setAttribute("aSeed", new THREE.BufferAttribute(seed, 1));
     const mat = new THREE.ShaderMaterial({
       vertexShader: STAR_VERT, fragmentShader: POINT_FRAG,
-      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false,
-      uniforms: { uTime: { value: 0 }, uPixelRatio: { value: this.pixelRatio }, uFade: { value: 1 } },
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      uniforms: { uTime: { value: 0 }, uPixelRatio: { value: this.pixelRatio } },
     });
     this.scene.add(new THREE.Points(geo, mat));
     return mat;
   }
 
-  // -------------------------------------------------------------------------- the gallery
+  /** A rectangle (or two, nested) drawn in thin additive light. */
+  private lightFrame(w: number, h: number, opacity: number, double = false) {
+    const mat = new THREE.LineBasicMaterial({
+      color: new THREE.Color("#b9cbff").multiplyScalar(1.6), transparent: true, opacity,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    const rect = (hw: number, hh: number) =>
+      new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(-hw, -hh, 0), new THREE.Vector3(hw, -hh, 0),
+        new THREE.Vector3(hw, hh, 0), new THREE.Vector3(-hw, hh, 0),
+      ]), mat);
+    const g = new THREE.Group();
+    g.add(rect(w / 2, h / 2));
+    if (double) g.add(rect(w / 2 + 0.06, h / 2 + 0.06));
+    return { group: g, mat };
+  }
+
+  // ---------------------------------------------------------------- the gallery of light
   private buildGallery() {
-    const g = this.gallery;
-    this.scene.add(g);
-    const length = HALL_START - HALL_END;
-    const midZ = (HALL_START + HALL_END) / 2;
-
-    const wallTex = this.plasterTexture();
-    const wallMat = new THREE.MeshStandardMaterial({ color: "#1a1f2c", roughness: 0.92, metalness: 0, map: wallTex });
-    const floorMat = new THREE.MeshStandardMaterial({ color: "#07090e", roughness: 0.22, metalness: 0.35 });
-    const ceilMat = new THREE.MeshStandardMaterial({ color: "#06070b", roughness: 1 });
-    const brass = new THREE.MeshStandardMaterial({ color: BRASS, roughness: 0.3, metalness: 1, envMapIntensity: 1.6 });
-
-    const plane = (w: number, h: number, mat: THREE.Material) => new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
-    const floor = plane(HALL_HALF_WIDTH * 2, length, floorMat);
-    floor.rotation.x = -Math.PI / 2;
-    floor.position.set(0, FLOOR_Y, midZ);
-    const ceil = plane(HALL_HALF_WIDTH * 2, length, ceilMat);
-    ceil.rotation.x = Math.PI / 2;
-    ceil.position.set(0, CEIL_Y, midZ);
-    const left = plane(length, CEIL_Y - FLOOR_Y, wallMat);
-    left.rotation.y = Math.PI / 2;
-    left.position.set(-HALL_HALF_WIDTH, (CEIL_Y + FLOOR_Y) / 2, midZ);
-    const right = plane(length, CEIL_Y - FLOOR_Y, wallMat);
-    right.rotation.y = -Math.PI / 2;
-    right.position.set(HALL_HALF_WIDTH, (CEIL_Y + FLOOR_Y) / 2, midZ);
-    const end = plane(HALL_HALF_WIDTH * 2, CEIL_Y - FLOOR_Y, new THREE.MeshStandardMaterial({ color: "#232a3a", roughness: 0.9, map: wallTex }));
-    end.position.set(0, (CEIL_Y + FLOOR_Y) / 2, HALL_END);
-    g.add(floor, ceil, left, right, end);
-
-    // skirting and a thin brass rail along both walls
-    for (const side of [-1, 1]) {
-      const rail = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.02, length), brass);
-      rail.position.set(side * (HALL_HALF_WIDTH - 0.02), 2.35, midZ);
-      g.add(rail);
-    }
-
-    // ceiling light lines: what the bloom catches as the camera glides underneath
-    const stripMat = new THREE.MeshBasicMaterial({ color: new THREE.Color("#ffe8c8").multiplyScalar(2.2) });
-    for (let z = HALL_START - 1.5; z > HALL_END + 2; z -= 3.2) {
-      const strip = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.015, 0.06), stripMat);
-      strip.position.set(0, CEIL_Y - 0.02, z);
-      g.add(strip);
-    }
-
-    // a dim warm glow travelling along the hall, so the walls read as surfaces
-    for (let z = HALL_START - 2; z > HALL_END + 3; z -= 8) {
-      const lamp = new THREE.PointLight(WARM, 9, 11, 1.6);
-      lamp.position.set(0, 2.6, z);
-      g.add(lamp);
-    }
-    g.add(new THREE.HemisphereLight("#33415f", "#05060a", 0.35));
-
-    // veiled portraits along both walls, each with a small picture light
-    const veils = [0, 1, 2, 3, 4, 5].map((i) => this.veiledPortrait(i));
-    let k = 0;
-    for (let z = HALL_START - 3; z > HALL_END + 5; z -= 4.1) {
-      for (const side of [-1, 1]) {
-        const w = 0.95 + ((k * 37) % 5) * 0.08, h = w * 1.3;
-        const f = this.frame(w, h, brass, new THREE.MeshBasicMaterial({ map: veils[k % veils.length], color: "#8c8c8c", fog: true }));
-        f.position.set(side * (HALL_HALF_WIDTH - 0.04), 0.5 + ((k * 13) % 3) * 0.06, z);
-        f.rotation.y = -side * Math.PI / 2;
-        g.add(f);
-        g.add(this.pictureLight(f, h, side));
-        k++;
-      }
-    }
-
-    // the final wall: three frames, dark until their spotlights switch on
-    FINAL_FRAMES.forEach((spec) => {
-      const painting = new THREE.MeshBasicMaterial({ color: "#0d0d0d", map: veils[0] });
-      const f = this.frame(spec.w, spec.h, brass, painting, true);
-      f.position.set(spec.x, spec.y, WALL_Z + 0.02);
-      g.add(f);
-      this.finalPaintings.push(f.userData.painting);
-
-      const beamMat = new THREE.ShaderMaterial({
-        vertexShader: BEAM_VERT, fragmentShader: BEAM_FRAG,
-        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, fog: false,
-        uniforms: { uIntensity: { value: 0 }, uColor: { value: WARM.clone() } },
+    const geo = new THREE.PlaneGeometry(1, 1.3);
+    // alternate sides and heights, so frames at different depths never line up in view
+    const spots = [
+      [-2.6, 0.9, -6.5, 0.5], [2.8, -0.4, -9, -0.45], [-3.0, -0.6, -11.5, 0.4], [3.0, 1.3, -14, -0.45],
+      [-2.7, 1.5, -16.5, 0.35], [3.2, -0.7, -19, -0.4], [-3.3, 0.2, -21.5, 0.4], [3.4, 1.0, -24, -0.3],
+      [-4.4, -0.9, -26.5, 0.25], [4.6, 1.8, -27.5, -0.2],
+    ];
+    spots.forEach(([x0, y, z, ry], i) => {
+      const x = x0 * 1.2;  // wide of the flight line, so they pass either side
+      const scale = 0.85 + ((i * 37) % 5) * 0.09;
+      const mat = new THREE.ShaderMaterial({
+        vertexShader: PORTRAIT_VERT, fragmentShader: PORTRAIT_FRAG,
+        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+        uniforms: { uTime: { value: 0 }, uFade: { value: 0 }, uSeed: { value: (i * 0.618) % 1 } },
       });
-      const lampPos = new THREE.Vector3(spec.x, CEIL_Y - 0.05, WALL_Z + 2.4);
-      const target = new THREE.Vector3(spec.x, spec.y, WALL_Z);
-      const len = lampPos.distanceTo(target);
-      const cone = new THREE.Mesh(new THREE.ConeGeometry(spec.w * 0.95, len, 48, 1, true), beamMat);
-      // cone's tip at the lamp, opening toward the painting
-      cone.position.copy(lampPos.clone().lerp(target, 0.5));
-      cone.lookAt(target);
-      cone.rotateX(-Math.PI / 2);
-      g.add(cone);
-      this.finalBeams.push(beamMat);
-
-      const spot = new THREE.SpotLight(WARM, 0, 9, 0.42, 0.55, 1.4);
-      spot.position.copy(lampPos);
-      spot.target.position.copy(target);
-      g.add(spot, spot.target);
-      this.finalSpots.push(spot);
-
-      const fixture = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 0.16, 20), brass);
-      fixture.position.copy(lampPos);
-      g.add(fixture);
+      const portrait = new THREE.Mesh(geo, mat);
+      const { group: frame, mat: lineMat } = this.lightFrame(1.14, 1.44, 0);
+      frame.position.z = -0.01;
+      const g = new THREE.Group();
+      g.add(portrait, frame);
+      g.position.set(x, y, z);
+      g.rotation.y = ry;
+      g.scale.setScalar(scale);
+      this.scene.add(g);
+      this.portraitMats.push(mat);
+      this.lineMats.push(lineMat);
+      this.portraitGroups.push(g);
     });
   }
 
-  private frame(w: number, h: number, brass: THREE.Material, painting: THREE.MeshBasicMaterial, square = false) {
-    const group = new THREE.Group();
-    const border = 0.07;
-    const back = new THREE.Mesh(new THREE.BoxGeometry(w + border * 2, h + border * 2, 0.05), brass);
-    // the mat (passe-partout): ivory for the results, dark for the veiled portraits
-    const mat = new THREE.Mesh(
-      new THREE.PlaneGeometry(w + 0.02, h + 0.02),
-      new THREE.MeshStandardMaterial({ color: square ? "#d8cfbf" : "#0b0b0d", roughness: 1 }),
-    );
-    mat.position.z = 0.026;
-    // the matches are square photos: a square opening set a little above centre, gallery style
-    const side = w * 0.74;
-    const canvas = new THREE.Mesh(new THREE.PlaneGeometry(square ? side : w * 0.86, square ? side : h * 0.88), painting);
-    canvas.position.set(0, square ? (h - side) * 0.12 : 0, 0.028);
-    group.add(back, mat, canvas);
-    group.userData.painting = canvas;
-    return group;
+  private buildFinalFrames() {
+    const n = GRID * GRID;
+    const total = n * 3;
+    const position = new Float32Array(total * 3);
+    const start = new Float32Array(total * 3);
+    const uv = new Float32Array(total * 2);
+    const frameIdx = new Float32Array(total);
+    const seed = new Float32Array(total);
+    // the waiting cloud: a loose nebula in front of the frames
+    const cloudCentre = new THREE.Vector3(0, 0.6, WALL_Z + 1.6);
+    FINAL_FRAMES.forEach((f, k) => {
+      for (let j = 0; j < GRID; j++) {
+        for (let i = 0; i < GRID; i++) {
+          const idx = k * n + j * GRID + i;
+          const u = (i + 0.5) / GRID, v = (j + 0.5) / GRID;
+          position.set([f.x + (u - 0.5) * f.s, f.y + (v - 0.5) * f.s, WALL_Z + 0.02], idx * 3);
+          uv.set([u, v], idx * 2);
+          // each frame's points wait in a loose cloud drifting in front of their own frame
+          const r = 0.5 + Math.pow(Math.random(), 0.7) * 1.4;
+          const th = Math.random() * Math.PI * 2, ph = Math.acos(2 * Math.random() - 1);
+          start.set([
+            cloudCentre.x + f.x * 0.75 + r * Math.sin(ph) * Math.cos(th) * 1.1,
+            cloudCentre.y + (f.y - 0.6) + r * Math.cos(ph) * 0.55,
+            cloudCentre.z + r * Math.sin(ph) * Math.sin(th) * 0.5,
+          ], idx * 3);
+          frameIdx[idx] = k;
+          seed[idx] = Math.random();
+        }
+      }
+    });
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(position, 3));
+    geo.setAttribute("aStart", new THREE.BufferAttribute(start, 3));
+    geo.setAttribute("aUv", new THREE.BufferAttribute(uv, 2));
+    geo.setAttribute("aFrame", new THREE.BufferAttribute(frameIdx, 1));
+    geo.setAttribute("aSeed", new THREE.BufferAttribute(seed, 1));
+    const blank = new THREE.DataTexture(new Uint8Array([140, 150, 170, 255]), 1, 1);
+    blank.needsUpdate = true;
+    this.assembleMat = new THREE.ShaderMaterial({
+      vertexShader: ASSEMBLE_VERT, fragmentShader: POINT_FRAG,
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      uniforms: {
+        uTime: { value: 0 }, uSize: { value: this.opts.lowPower ? 19 : 14 }, uPixelRatio: { value: this.pixelRatio },
+        uOut: { value: 0 }, uAssemble: { value: new THREE.Vector3() }, uHasPhoto: { value: new THREE.Vector3() },
+        uTex0: { value: blank }, uTex1: { value: blank }, uTex2: { value: blank },
+      },
+    });
+    const pts = new THREE.Points(geo, this.assembleMat);
+    pts.frustumCulled = false;
+    this.scene.add(pts);
+
+    FINAL_FRAMES.forEach((f) => {
+      const halo = new THREE.ShaderMaterial({
+        vertexShader: UV_VERT, fragmentShader: HALO_FRAG,
+        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+        uniforms: { uIntensity: { value: 0 } },
+      });
+      const haloMesh = new THREE.Mesh(new THREE.PlaneGeometry(f.s * 2.6, f.s * 2.6), halo);
+      haloMesh.position.set(f.x, f.y, WALL_Z - 0.05);
+      this.scene.add(haloMesh);
+      this.haloMats.push(halo);
+
+      const photo = new THREE.Mesh(
+        new THREE.PlaneGeometry(f.s, f.s),
+        new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
+      );
+      photo.position.set(f.x, f.y, WALL_Z + 0.01);
+      photo.visible = false;
+      this.scene.add(photo);
+      this.photos.push(photo);
+
+      const { group, mat } = this.lightFrame(f.s + 0.14, f.s + 0.14, 0, true);
+      group.position.set(f.x, f.y, WALL_Z + 0.03);
+      this.scene.add(group);
+      this.finalFrameMats.push(mat);
+    });
   }
 
-  private pictureLight(frame: THREE.Group, h: number, side: number) {
-    // a soft warm wash down the painting (additive plane), no real light needed
-    const tex = this.radialTexture();
-    const glow = new THREE.Mesh(
-      new THREE.PlaneGeometry(1.5, h * 1.25),
-      new THREE.MeshBasicMaterial({ map: tex, color: new THREE.Color("#ffcf96").multiplyScalar(0.55), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }),
-    );
-    glow.position.copy(frame.position);
-    glow.position.x -= side * 0.06;
-    glow.position.y += h * 0.18;
-    glow.rotation.y = frame.rotation.y;
-    return glow;
-  }
-
-  private setPaintings(thumbnails: (string | null)[]) {
+  private setPhotos(thumbnails: (string | null)[]) {
     const loader = new THREE.TextureLoader();
+    const uniforms = [this.assembleMat.uniforms.uTex0, this.assembleMat.uniforms.uTex1, this.assembleMat.uniforms.uTex2];
+    const has = this.assembleMat.uniforms.uHasPhoto.value as THREE.Vector3;
+    has.set(0, 0, 0);
     RESULT_ORDER.forEach((frame, rank) => {
       const src = thumbnails[rank];
       if (!src) return;
       loader.load(src, (tex) => {
         tex.colorSpace = THREE.SRGBColorSpace;
         tex.anisotropy = 4;
-        const mesh = this.finalPaintings[frame];
-        mesh.material.map?.dispose();
-        mesh.material.map = tex;
-        mesh.material.needsUpdate = true;
+        const photo = this.photos[frame];
+        photo.material.map?.dispose();
+        photo.material.map = tex;
+        photo.material.needsUpdate = true;
+        uniforms[frame].value = tex;
+        has.setComponent(frame, 1);
       });
     });
-  }
-
-  private plasterTexture() {
-    const c = document.createElement("canvas");
-    c.width = c.height = 256;
-    const ctx = c.getContext("2d")!;
-    const img = ctx.createImageData(256, 256);
-    for (let i = 0; i < img.data.length; i += 4) {
-      const v = 200 + Math.random() * 55;
-      img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
-      img.data[i + 3] = 255;
-    }
-    ctx.putImageData(img, 0, 0);
-    const tex = new THREE.CanvasTexture(c);
-    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    tex.repeat.set(8, 2);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    return tex;
-  }
-
-  private radialTexture() {
-    const c = document.createElement("canvas");
-    c.width = c.height = 128;
-    const ctx = c.getContext("2d")!;
-    const g = ctx.createRadialGradient(64, 20, 2, 64, 54, 70);
-    g.addColorStop(0, "rgba(255,255,255,0.9)");
-    g.addColorStop(0.45, "rgba(255,255,255,0.22)");
-    g.addColorStop(1, "rgba(255,255,255,0)");
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, 128, 128);
-    return new THREE.CanvasTexture(c);
-  }
-
-  /** A dark "old master" canvas with a faint head silhouette - the other faces in the index. */
-  private veiledPortrait(variant: number) {
-    const c = document.createElement("canvas");
-    c.width = 192;
-    c.height = 256;
-    const ctx = c.getContext("2d")!;
-    const hues = ["#1d2436", "#2a2219", "#1b2a2a", "#2b1d26", "#22263a", "#2a271c"];
-    const bg = ctx.createLinearGradient(0, 0, 0, 256);
-    bg.addColorStop(0, hues[variant % hues.length]);
-    bg.addColorStop(1, "#08090c");
-    ctx.fillStyle = bg;
-    ctx.fillRect(0, 0, 192, 256);
-    const cx = 96 + (variant % 3 - 1) * 10;
-    const glow = ctx.createRadialGradient(cx, 110, 6, cx, 120, 90);
-    glow.addColorStop(0, "rgba(235,215,185,0.30)");
-    glow.addColorStop(1, "rgba(235,215,185,0)");
-    ctx.fillStyle = glow;
-    ctx.fillRect(0, 0, 192, 256);
-    ctx.fillStyle = "rgba(10,10,14,0.55)";
-    ctx.beginPath();
-    ctx.ellipse(cx, 112, 34, 44, 0, 0, Math.PI * 2);           // head
-    ctx.fill();
-    ctx.beginPath();
-    ctx.ellipse(cx, 238, 78, 56, 0, Math.PI, Math.PI * 2);     // shoulders
-    ctx.fill();
-    const tex = new THREE.CanvasTexture(c);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    return tex;
   }
 }
