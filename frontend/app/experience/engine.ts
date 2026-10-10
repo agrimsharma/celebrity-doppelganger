@@ -236,7 +236,7 @@ void main() {
   vec3 ghost = vec3(0.45, 0.58, 1.0) * (0.25 + 0.45 * aSeed);
   vColor = mix(ghost, mix(ghost, tex * 0.75, has), t);
   // once the photo has resolved underneath, the points step back to a faint shimmer
-  vAlpha = (0.3 + 0.45 * t) * (1.0 - uOut) * (1.0 - 0.88 * smoothstep(0.9, 1.0, a));
+  vAlpha = (0.3 + 0.45 * t) * (1.0 - uOut) * (1.0 - 0.94 * smoothstep(0.9, 1.0, a));
 }`;
 
 const HALO_FRAG = /* glsl */ `
@@ -307,6 +307,7 @@ export default class Engine {
   private reform = 0;              // 1 -> 0 as the head re-forms after coming back
   private pointer = new THREE.Vector2();
   private look = new THREE.Vector2();
+  private roll = 0;
   private lookTarget = new THREE.Vector3();
 
   // the composition
@@ -542,8 +543,10 @@ export default class Engine {
     }
     const cam = this.camera;
     if (this.mode === "landing" || this.mode === "cruise") {
-      cam.position.set(START.x, START.y, START.z - this.travelled);
-      const ahead = new THREE.Vector3(0, START.y + 0.1, cam.position.z - 12);
+      cruisePoint(this.travelled, cam.position);
+      // look along the path, a little way ahead, so the camera banks with each weave
+      const ahead = cruisePoint(this.travelled + 12, new THREE.Vector3());
+      ahead.y += 0.1;
       this.lookTarget.lerpVectors(new THREE.Vector3(0, 0.1, 0), ahead, smoothstep(0, 4, this.travelled));
     } else if (this.mode === "turning" && this.turn) {
       const u = Math.min((t - this.turn.start) / TURN_TIME, 1);
@@ -560,6 +563,10 @@ export default class Engine {
       cam.position.y += Math.sin(t * 0.43) * 0.016;
     }
     cam.lookAt(this.lookTarget);
+    // roll into the weave while cruising, level out for the turn
+    const rollTarget = this.mode === "cruise" && !still ? cruiseRoll(this.travelled) : 0;
+    this.roll += (rollTarget - this.roll) * (1 - Math.exp(-dt * 2));
+    cam.rotateZ(this.roll);
     this.sky.position.copy(cam.position);
     this.starMat.uniforms.uCam.value.copy(cam.position);
 
@@ -610,7 +617,7 @@ export default class Engine {
       this.photos[i].visible = resolve > 0.001;
       const on = this.assemble[i];
       this.frameMats[i].opacity = 0.25 + 0.75 * on;
-      this.haloMats[i].uniforms.uIntensity.value = 0.05 + 0.2 * on;
+      this.haloMats[i].uniforms.uIntensity.value = 0.05 + 0.13 * on;
       if (i < 3) this.linkMats[i].opacity = 0.5 * smoothstep(0.6, 1.0, Math.min(on, this.assemble[YOU]));
     }
     const u = this.assembleMat.uniforms;
@@ -620,8 +627,8 @@ export default class Engine {
 
     // starlight wants a generous bloom; resolved photos want almost none
     const resolved = Math.max(...this.assemble.map((a) => smoothstep(0.8, 1, a)));
-    this.bloom.strength = 0.6 - 0.3 * resolved;
-    this.bloom.threshold = 0.22 + 0.45 * resolved;
+    this.bloom.strength = 0.6 - 0.42 * resolved;
+    this.bloom.threshold = 0.22 + 0.58 * resolved;
 
     this.black += (this.blackTarget - this.black) * (1 - Math.exp(-dt * 7));
     this.film.uniforms.uBlack.value = this.black;
@@ -631,8 +638,7 @@ export default class Engine {
 
   /** Place the composition off to the right of the flight line and bank round to face it. */
   private beginTurn(instant: boolean) {
-    const p0 = this.camera.position.clone();
-    p0.set(START.x, START.y, START.z - this.travelled);
+    const p0 = cruisePoint(this.travelled, new THREE.Vector3());
     const forward = new THREE.Vector3(0, 0, -1);
     const right = new THREE.Vector3(1, 0, 0);
     // the composition sits well to the right and ahead: 90 degrees off the flight line, so it
@@ -652,7 +658,7 @@ export default class Engine {
       start: this.clock.getElapsed(), p0,
       b1: p0.clone().addScaledVector(forward, lead),
       b2: p1.clone().addScaledVector(right, -3),
-      p1, look0: p0.clone().addScaledVector(forward, 12), look1,
+      p1, look0: this.lookTarget.clone(), look1,
     };
     this.mode = "turning";
     if (instant) {
@@ -913,6 +919,25 @@ export default class Engine {
       }).catch(() => {});
     });
   }
+}
+
+/**
+ * The cruise line: straight down -z with a slow weave left/right and up/down (as a function of
+ * distance, so it keeps its shape at any speed), easing in after take-off. The portraits sit at
+ * |x| > 3, well clear of the +-0.6 weave.
+ */
+function cruisePoint(d: number, out: THREE.Vector3) {
+  const k = smoothstep(3, 12, d);
+  return out.set(
+    START.x + 0.6 * Math.sin(d * 0.15) * k,
+    START.y + 0.25 * Math.sin(d * 0.1 + 1.3) * k,
+    START.z - d,
+  );
+}
+
+/** Bank gently into the weave (the sign follows the sideways acceleration). */
+function cruiseRoll(d: number) {
+  return 0.05 * Math.sin(d * 0.15) * smoothstep(3, 12, d);
 }
 
 /** Distance from a square's centre to its edge along a direction (half = half the side). */
