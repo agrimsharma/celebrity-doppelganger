@@ -80,7 +80,7 @@ export default function CameraCapture({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/80 px-4 backdrop-blur-sm"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
@@ -89,12 +89,12 @@ export default function CameraCapture({
       <motion.div
         initial={{ scale: 0.95, y: 10 }}
         animate={{ scale: 1, y: 0 }}
-        className="solid-card flex w-full max-w-md flex-col items-center gap-4 rounded-[2rem] p-6"
+        className="glass flex w-full max-w-md flex-col items-center gap-4 rounded-2xl p-6"
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 className="text-xl font-extrabold tracking-tight text-zinc-900">Take a selfie</h2>
+        <h2 className="font-display text-3xl font-light text-ivory">Take a <em className="italic">selfie</em></h2>
 
-        <div className="relative aspect-[4/3] w-full overflow-hidden rounded-[1.5rem] border-2 border-black/10 bg-zinc-900">
+        <div className="relative aspect-[4/3] w-full overflow-hidden rounded-xl border border-ivory/15 bg-black">
           {error ? (
             <p className="flex h-full items-center justify-center px-6 text-center text-sm text-white/90">{error}</p>
           ) : (
@@ -108,26 +108,26 @@ export default function CameraCapture({
                 className="h-full w-full -scale-x-100 object-cover"
               />
               {/* face guide */}
-              <div className="pointer-events-none absolute left-1/2 top-1/2 h-[70%] w-[45%] -translate-x-1/2 -translate-y-1/2 rounded-[50%] border-2 border-dashed border-white/60" />
+              <div className="pointer-events-none absolute left-1/2 top-1/2 h-[70%] w-[45%] -translate-x-1/2 -translate-y-1/2 rounded-[50%] border border-dashed border-brass/70" />
             </>
           )}
         </div>
 
-        <p className="text-center text-xs text-zinc-500">
+        <p className="text-center text-xs text-ivory/55">
           Face the camera in good light. Nothing is sent until you press &quot;Find my doppelganger&quot;.
         </p>
 
         <div className="flex w-full gap-3">
           <button
             onClick={onClose}
-            className="flex-1 rounded-full border-2 border-black/10 bg-white px-6 py-3 font-bold text-zinc-700"
+            className="btn-quiet flex-1 rounded-full px-6 py-3 text-sm"
           >
             Cancel
           </button>
           <button
             onClick={capture}
             disabled={!ready || !!error}
-            className="tactile-btn flex-1 rounded-full bg-[#ff5a1f] px-6 py-3 font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
+            className="btn-primary flex-1 rounded-full px-6 py-3 text-sm font-semibold"
           >
             Take photo
           </button>

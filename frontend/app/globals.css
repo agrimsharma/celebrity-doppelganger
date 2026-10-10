@@ -1,49 +1,78 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --ink: #04060c;          /* the night the whole experience sits in */
+  --ivory: #ece6da;        /* text */
+  --mist: rgba(236, 230, 218, 0.62);
+  --brass: #c9a46a;        /* the one warm accent: frames, primary action */
+  --line: rgba(236, 230, 218, 0.14);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-ink: var(--ink);
+  --color-ivory: var(--ivory);
+  --color-brass: var(--brass);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --font-display: var(--font-display);
 }
 
+html,
 body {
-  color: var(--foreground);
-  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
-  min-height: 100vh;
-  /* light, clean canvas - the color lives on the cards now, not the whole page */
-  background: linear-gradient(135deg, #f4f1ea 0%, #f0f3ec 50%, #f6efe8 100%);
-  background-attachment: fixed;
+  background: var(--ink);
+  color: var(--ivory);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  overflow: hidden;
 }
 
-/* solid, crisp card - flat color + real drop shadow, no blur/transparency */
-.solid-card {
-  background: #ffffff;
-  border: 1.5px solid rgba(0, 0, 0, 0.06);
-  box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.04);
+::selection {
+  background: rgba(201, 164, 106, 0.35);
 }
 
-/* the three flat accent colors cycled across result cards */
-.card-accent-0 { background: #c6f24e; } /* lime green - the "best match" color */
-.card-accent-1 { background: #a8c8f5; } /* soft periwinkle blue */
-.card-accent-2 { background: #f7b8d0; } /* soft pink */
-.card-accent-you { background: #fdf3d9; } /* warm cream - visually distinct from the celeb colors */
-
-.tactile-btn {
-  box-shadow: 0 6px 0 rgba(0, 0, 0, 0.15), 0 8px 20px rgba(0, 0, 0, 0.12);
-  transition: transform 0.1s ease, box-shadow 0.1s ease;
-}
-.tactile-btn:active {
-  transform: translateY(4px);
-  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.15), 0 4px 10px rgba(0, 0, 0, 0.1);
+/* a dark glass panel: enough blur to separate the UI from the moving scene behind it */
+.glass {
+  background: linear-gradient(180deg, rgba(14, 18, 30, 0.62), rgba(8, 10, 18, 0.72));
+  border: 1px solid var(--line);
+  backdrop-filter: blur(18px) saturate(120%);
+  -webkit-backdrop-filter: blur(18px) saturate(120%);
 }
 
-.star-accent {
-  position: absolute;
-  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.08));
+.btn-primary {
+  background: linear-gradient(180deg, #dcbb84 0%, #b8925a 100%);
+  color: #120e08;
+  box-shadow: 0 0 0 1px rgba(255, 230, 190, 0.25) inset, 0 10px 30px -10px rgba(201, 164, 106, 0.55);
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.25s, filter 0.25s;
+}
+.btn-primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  filter: brightness(1.06);
+  box-shadow: 0 0 0 1px rgba(255, 230, 190, 0.35) inset, 0 16px 40px -12px rgba(201, 164, 106, 0.7);
+}
+.btn-primary:disabled {
+  filter: saturate(0.3) brightness(0.6);
+  cursor: not-allowed;
+}
+
+.btn-quiet {
+  border: 1px solid var(--line);
+  color: var(--ivory);
+  transition: border-color 0.25s, background 0.25s;
+}
+.btn-quiet:hover:not(:disabled) {
+  border-color: rgba(236, 230, 218, 0.4);
+  background: rgba(236, 230, 218, 0.05);
+}
+
+.eyebrow {
+  font-size: 0.68rem;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--mist);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

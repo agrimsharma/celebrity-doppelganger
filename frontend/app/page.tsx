@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import CameraCapture, { cameraSupported } from "./CameraCapture";
+import Stage, { type FrameRect, type StageHandle } from "./experience/Stage";
 
 // similarity = percentile of this score among the best matches of people NOT in the index
 type Match = { name: string; similarity: number; raw_similarity?: number; thumbnail: string | null };
@@ -18,12 +19,14 @@ const ERROR_MESSAGES: Record<string, string> = {
   server_error: "The matching server hit an error. Please try again.",
 };
 
-const ACCENT_CLASSES = ["card-accent-0", "card-accent-1", "card-accent-2"];
-
+const REPO_URL = "https://github.com/agrimsharma/celebrity-doppelganger";
+const EASE = [0.22, 1, 0.36, 1] as const;
 const noopSubscribe = () => () => {};
 
-// The free-tier backend (Hugging Face Space) sleeps when idle; waking it takes about a minute.
+// The free-tier backend sleeps when idle; the first request after a quiet spell wakes it.
 type BackendStatus = "checking" | "waking" | "ready" | "down";
+// landing -> searching (camera walks the gallery) -> results (at the wall) -> returning -> landing
+type Phase = "landing" | "searching" | "results" | "returning";
 const HEALTH_POLL_MS = 5000;
 const WAKE_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -48,19 +51,22 @@ async function waitForBackend(timeoutMs = WAKE_TIMEOUT_MS): Promise<boolean> {
 export default function Home() {
   const [preview, setPreview] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [phase, setPhase] = useState<Phase>("landing");
   const [matches, setMatches] = useState<Match[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [backend, setBackend] = useState<BackendStatus>("checking");
   const [waitingForBackend, setWaitingForBackend] = useState(false);
+  const [webgl, setWebgl] = useState<boolean | null>(null);   // null until the stage reports
+  const [frames, setFrames] = useState<FrameRect[] | null>(null);
+  const stage = useRef<StageHandle>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-
-  const showResults = matches !== null;
 
   // false during server rendering (no navigator), real value once hydrated
   const canUseCamera = useSyncExternalStore(noopSubscribe, cameraSupported, () => false);
   const closeCamera = useCallback(() => setCameraOpen(false), []);
+  const onSupport = useCallback((ok: boolean) => setWebgl(ok), []);
+  const onLayout = useCallback((rects: FrameRect[]) => setFrames(rects), []);
 
   // ping the backend as soon as the page opens, so a sleeping one starts waking right away
   useEffect(() => {
@@ -87,11 +93,15 @@ export default function Home() {
     setPreview(f ? URL.createObjectURL(f) : null);
   }
 
-  function reset() {
-    setMatches(null);
-    setError(null);
-    setFile(null);
-    setPreview(null);
+  function anotherPhoto() {
+    setPhase("returning");
+    setFrames(null);
+    stage.current?.back(() => {
+      setMatches(null);
+      setFile(null);
+      setPreview(null);
+      setPhase("landing");
+    });
   }
 
   async function postMatch(base64: string): Promise<ApiResponse> {
@@ -104,11 +114,13 @@ export default function Home() {
   }
 
   async function handleSubmit() {
-    if (!file) return;
-    setLoading(true);
+    if (!file || phase !== "landing") return;
+    setPhase("searching");
     setError(null);
     setMatches(null);
+    if (webgl) stage.current?.startSearch();
 
+    let failure: string | null = null;
     try {
       const base64 = await fileToBase64(file);
       if (backend !== "ready") {
@@ -126,181 +138,68 @@ export default function Home() {
         data = await postMatch(base64);
       }
       if ("error" in data) {
-        setError(ERROR_MESSAGES[data.error] ?? "Something went wrong. Please try another photo.");
+        failure = ERROR_MESSAGES[data.error] ?? "Something went wrong. Please try another photo.";
       } else {
         setMatches(data.matches);
+        if (webgl) {
+          stage.current?.showResults(data.matches.map((m) => m.thumbnail), () => setPhase("results"));
+        } else {
+          setPhase("results");
+        }
       }
     } catch {
-      setError("Couldn't reach the server. Please try again.");
-    } finally {
-      setLoading(false);
+      failure = "Couldn't reach the server. Please try again.";
+    }
+    if (failure) {
+      setError(failure);
+      if (webgl) stage.current?.back(() => setPhase("landing"));
+      else setPhase("landing");
     }
   }
 
   return (
-    <div className="relative flex min-h-screen flex-col items-center overflow-hidden px-4 py-10">
-      <StarAccent className="left-[8%] top-[12%] hidden text-black/70 sm:block" size={28} />
-      <StarAccent className="right-[10%] top-[20%] hidden text-black/40 sm:block" size={18} rotate={20} />
+    <div className="relative h-dvh w-full overflow-hidden bg-ink">
+      <Stage ref={stage} onSupport={onSupport} onLayout={onLayout} />
+      {/* a soft darkening at the edges, so the UI always has contrast against the scene */}
+      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_at_center,transparent_40%,rgba(4,6,12,0.55)_100%)]" />
 
-      <AnimatePresence>
-        {!showResults ? (
-          <motion.main
-            key="upload"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0, scale: 0.96, transition: { duration: 0.25 } }}
-            className="flex min-h-[80vh] w-full max-w-md flex-1 flex-col items-center justify-center gap-6"
-          >
-            <div className="flex w-full flex-col items-center gap-6 rounded-[2rem] solid-card p-8">
-              <motion.h1
-                animate={{ opacity: loading ? 0.5 : 1 }}
-                className="text-center text-3xl font-extrabold tracking-tight text-zinc-900"
-              >
-                Celebrity Doppelganger Finder
-              </motion.h1>
-              <p className="text-center text-sm text-zinc-600">
-                Upload a photo or take a selfie, and we&apos;ll find your closest match among 140,000 celebrity faces.
-              </p>
-              <BackendPill status={backend} />
+      <Header backend={backend} dim={phase !== "landing"} />
 
-              <div className="relative h-64 w-64">
-                <motion.div
-                  animate={loading ? {
-                    boxShadow: [
-                      "0 0 60px 20px rgba(198,242,78,0.7)",
-                      "0 0 70px 25px rgba(168,200,245,0.7)",
-                      "0 0 70px 25px rgba(247,184,208,0.7)",
-                      "0 0 70px 25px rgba(255,90,31,0.7)",
-                      "0 0 60px 20px rgba(198,242,78,0.7)",
-                    ],
-                  } : { boxShadow: "0 10px 30px -5px rgba(0,0,0,0.12)" }}
-                  transition={loading ? { duration: 3.2, repeat: Infinity, ease: "easeInOut" } : undefined}
-                  className="card-accent-1 relative flex h-64 w-64 cursor-pointer items-center justify-center overflow-hidden rounded-[1.75rem] border-2 border-black/10"
-                  onClick={() => !loading && inputRef.current?.click()}
-                >
-                  {preview ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={preview} alt="Selected preview" className="h-full w-full object-cover" />
-                  ) : (
-                    <span className="px-6 text-center text-sm font-medium text-zinc-700">
-                      Click to select a photo
-                    </span>
-                  )}
-                  {/* scanning light sweep - reinforces "actively analyzing" */}
-                  {loading && (
-                    <motion.div
-                      className="pointer-events-none absolute inset-x-0 h-16 bg-gradient-to-b from-transparent via-white/70 to-transparent"
-                      animate={{ top: ["-15%", "105%"] }}
-                      transition={{ duration: 1.3, repeat: Infinity, ease: "easeInOut" }}
-                    />
-                  )}
-                </motion.div>
-              </div>
-              <input
-                ref={inputRef}
-                type="file"
-                accept="image/jpeg,image/png"
-                className="hidden"
-                onChange={(e) => handleFileSelect(e.target.files?.[0] ?? null)}
-              />
-
-              {canUseCamera && (
-                <button
-                  onClick={() => setCameraOpen(true)}
-                  disabled={loading}
-                  className="-mt-2 inline-flex items-center gap-2 rounded-full border-2 border-black/10 bg-white px-4 py-2 text-sm font-bold text-zinc-700 disabled:opacity-40"
-                >
-                  <CameraIcon /> Use camera
-                </button>
-              )}
-
-              <button
-                onClick={handleSubmit}
-                disabled={!file || loading}
-                className="tactile-btn w-full rounded-full bg-[#ff5a1f] px-6 py-3 font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                {loading ? (
-                  <span className="inline-flex items-center gap-2">
-                    <motion.span
-                      className="h-2 w-2 rounded-full bg-white"
-                      animate={{ opacity: [1, 0.3, 1] }}
-                      transition={{ duration: 1, repeat: Infinity, ease: "easeInOut" }}
-                    />
-                    {waitingForBackend ? "Waking up the model..." : "Finding your match..."}
-                  </span>
-                ) : (
-                  "Find my doppelganger"
-                )}
-              </button>
-
-              {error && (
-                <p className="w-full rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>
-              )}
-            </div>
-
-            <p className="max-w-md text-center text-xs text-zinc-500">
-              Demo built on the IMDB-WIKI dataset (academic research use only). Uploaded photos are
-              processed in memory and not stored.
-            </p>
-          </motion.main>
-        ) : (
-          <motion.main
+      <AnimatePresence mode="wait">
+        {phase === "landing" && (
+          <Landing
+            key="landing"
+            preview={preview}
+            fileChosen={!!file}
+            canUseCamera={canUseCamera}
+            error={error}
+            onPick={() => inputRef.current?.click()}
+            onCamera={() => setCameraOpen(true)}
+            onFind={handleSubmit}
+          />
+        )}
+        {phase === "searching" && <Searching key="searching" waking={waitingForBackend} />}
+        {phase === "results" && matches && (
+          <Results
             key="results"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1, transition: { delay: 0.1 } }}
-            exit={{ opacity: 0, transition: { duration: 0.2 } }}
-            className="flex min-h-[80vh] w-full max-w-4xl flex-1 flex-col items-center justify-center gap-10 pt-16"
-          >
-            <motion.h2
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.1 }}
-              className="text-center text-2xl font-extrabold tracking-tight text-zinc-900"
-            >
-              Your celebrity doppelganger{matches!.length > 1 ? "s" : ""}
-            </motion.h2>
-
-            <div className="flex flex-col items-center gap-6 sm:flex-row sm:items-center sm:justify-center sm:gap-4">
-              {preview && <UserCard preview={preview} />}
-
-              <motion.span
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ delay: 0.3 }}
-                className="hidden text-2xl font-extrabold text-zinc-400 sm:block"
-              >
-                vs
-              </motion.span>
-
-              <div className="flex flex-col items-center gap-6 sm:flex-row sm:items-end sm:gap-6">
-                {matches!.map((m, i) => (
-                  <MatchCard key={i} match={m} rank={i} />
-                ))}
-              </div>
-            </div>
-
-            <motion.p
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.5 }}
-              className="max-w-md text-center text-xs text-zinc-500"
-            >
-              Match strength compares your score with the best matches of thousands of people who
-              aren&apos;t in the dataset: 80% means your match is closer than 80% of theirs.
-            </motion.p>
-
-            <motion.button
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.6 }}
-              onClick={reset}
-              className="tactile-btn rounded-full bg-[#ff5a1f] px-6 py-3 font-bold text-white"
-            >
-              Try another photo
-            </motion.button>
-          </motion.main>
+            matches={matches}
+            frames={webgl ? frames : null}
+            preview={preview}
+            onAgain={anotherPhoto}
+          />
         )}
       </AnimatePresence>
+
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/jpeg,image/png"
+        className="hidden"
+        onChange={(e) => {
+          handleFileSelect(e.target.files?.[0] ?? null);
+          e.target.value = "";  // choosing the same file again should still fire
+        }}
+      />
 
       <AnimatePresence>
         {cameraOpen && (
@@ -317,116 +216,306 @@ export default function Home() {
   );
 }
 
-function BackendPill({ status }: { status: BackendStatus }) {
+// ----------------------------------------------------------------------------- header
+function Header({ backend, dim }: { backend: BackendStatus; dim: boolean }) {
+  return (
+    <motion.header
+      initial={{ opacity: 0, y: -8 }}
+      animate={{ opacity: dim ? 0.55 : 1, y: 0 }}
+      transition={{ duration: 1.2, ease: EASE, delay: 0.2 }}
+      className="fixed inset-x-0 top-0 z-20 flex items-center justify-between gap-4 px-5 py-5 sm:px-10"
+    >
+      <span className="font-display text-lg tracking-[0.28em] text-ivory">DOPPELGÄNGER</span>
+      <span className="eyebrow hidden md:block">139,845 faces · 36,310 people · ArcFace</span>
+      <div className="flex items-center gap-5">
+        <BackendStatusDot status={backend} />
+        <a href={REPO_URL} target="_blank" rel="noreferrer" className="eyebrow transition-colors hover:text-ivory">
+          Source ↗
+        </a>
+      </div>
+    </motion.header>
+  );
+}
+
+function BackendStatusDot({ status }: { status: BackendStatus }) {
   const styles: Record<BackendStatus, [string, string]> = {
-    checking: ["bg-zinc-300", "Connecting to the model..."],
-    waking: ["bg-amber-400 animate-pulse", "Waking up the model (free hosting sleeps when idle, about a minute)"],
-    ready: ["bg-emerald-500", "Model ready"],
-    down: ["bg-red-500", "The model isn't responding right now"],
+    checking: ["bg-ivory/40", "Connecting"],
+    waking: ["bg-amber-300 animate-pulse", "Waking the model"],
+    ready: ["bg-emerald-300", "Model ready"],
+    down: ["bg-red-400", "Model offline"],
   };
   const [dot, label] = styles[status];
   return (
-    <span className="-mt-3 inline-flex items-center gap-2 text-xs text-zinc-500" role="status">
-      <span className={`h-2 w-2 rounded-full ${dot}`} /> {label}
+    <span className="eyebrow inline-flex items-center gap-2" role="status">
+      <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />
+      <span className="hidden sm:inline">{label}</span>
     </span>
+  );
+}
+
+// ---------------------------------------------------------------------------- landing
+function Landing({
+  preview, fileChosen, canUseCamera, error, onPick, onCamera, onFind,
+}: {
+  preview: string | null;
+  fileChosen: boolean;
+  canUseCamera: boolean;
+  error: string | null;
+  onPick: () => void;
+  onCamera: () => void;
+  onFind: () => void;
+}) {
+  return (
+    <motion.main
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0, transition: { duration: 0.6, ease: EASE } }}
+      className="pointer-events-none relative z-10 flex h-dvh flex-col justify-between px-5 pb-6 pt-24 sm:px-10 sm:pb-10"
+    >
+      {/* the title, split around the head */}
+      <div className="flex flex-1 flex-col justify-start gap-1 md:flex-row md:items-center md:justify-between md:gap-0">
+        <Title text={["Every", "face"]} align="left" delay={0.35} />
+        <Title text={["has a", "double"]} align="right" delay={0.55} />
+      </div>
+
+      <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
+        <motion.section
+          initial={{ opacity: 0, y: 24 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 1.1, ease: EASE, delay: 0.75 }}
+          className="glass pointer-events-auto w-full max-w-md rounded-2xl p-5 sm:p-6"
+        >
+          <p className="eyebrow">No. 01 — Find yours</p>
+          <p className="mt-3 text-sm leading-relaxed text-ivory/80">
+            Upload a photo or take a selfie. We compare your face with 139,845 celebrity portraits,
+            then walk you through the gallery to your three closest matches.
+          </p>
+
+          <div className="mt-5 flex items-center gap-3">
+            <button
+              onClick={onPick}
+              className="group relative h-14 w-14 shrink-0 overflow-hidden rounded-full border border-ivory/20 bg-white/5"
+              aria-label={preview ? "Change photo" : "Choose a photo"}
+            >
+              {preview ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={preview} alt="Your photo" className="h-full w-full object-cover" />
+              ) : (
+                <span className="text-xl text-ivory/50 transition-colors group-hover:text-ivory">+</span>
+              )}
+            </button>
+            <button onClick={onPick} className="btn-quiet rounded-full px-4 py-2.5 text-sm">
+              {preview ? "Change photo" : "Upload photo"}
+            </button>
+            {canUseCamera && (
+              <button onClick={onCamera} className="btn-quiet inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-sm">
+                <CameraIcon /> Camera
+              </button>
+            )}
+          </div>
+
+          <button
+            onClick={onFind}
+            disabled={!fileChosen}
+            className="btn-primary mt-5 w-full rounded-full px-6 py-3.5 text-sm font-semibold tracking-wide"
+          >
+            Find my doppelgänger →
+          </button>
+
+          <AnimatePresence>
+            {error && (
+              <motion.p
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                className="mt-4 rounded-lg border border-red-300/20 bg-red-400/10 px-4 py-3 text-sm text-red-100"
+                role="alert"
+              >
+                {error}
+              </motion.p>
+            )}
+          </AnimatePresence>
+        </motion.section>
+
+        <motion.aside
+          initial={{ opacity: 0, y: 24 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 1.1, ease: EASE, delay: 0.95 }}
+          className="pointer-events-auto hidden max-w-xs text-right md:block"
+        >
+          <p className="eyebrow">How it works</p>
+          <p className="mt-3 text-xs leading-relaxed text-ivory/60">
+            Your face becomes 512 numbers (ArcFace), compared against every face in the index in
+            about 24 ms. Match strength is calibrated against 4,252 people who aren&apos;t famous.
+          </p>
+          <p className="mt-4 text-[0.65rem] leading-relaxed text-ivory/35">
+            Photos are processed in memory and never stored · IMDB-WIKI dataset, academic use ·
+            head scan: Lee Perry-Smith (Infinite Realities), CC BY 3.0
+          </p>
+        </motion.aside>
+      </div>
+    </motion.main>
+  );
+}
+
+function Title({ text, align, delay }: { text: string[]; align: "left" | "right"; delay: number }) {
+  return (
+    <h1
+      className={`font-display text-[clamp(2.2rem,8.5vw,7.5rem)] font-light uppercase leading-[0.86] tracking-[0.01em] text-ivory ${align === "right" ? "self-end text-right" : ""}`}
+    >
+      {text.map((word, i) => (
+        <span key={word} className="block overflow-hidden">
+          <motion.span
+            className="block"
+            initial={{ y: "105%" }}
+            animate={{ y: 0 }}
+            transition={{ duration: 1.3, ease: EASE, delay: delay + i * 0.12 }}
+          >
+            {i === 1 && align === "left" ? <em className="font-normal italic">{word}</em> : word}
+          </motion.span>
+        </span>
+      ))}
+    </h1>
+  );
+}
+
+// --------------------------------------------------------------------------- searching
+function Searching({ waking }: { waking: boolean }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1, transition: { delay: 0.8, duration: 1 } }}
+      exit={{ opacity: 0, transition: { duration: 0.5 } }}
+      className="pointer-events-none fixed inset-x-0 bottom-10 z-10 flex flex-col items-center gap-3 px-6 text-center"
+      role="status"
+    >
+      <p className="font-display text-2xl font-light italic text-ivory/90 sm:text-3xl">
+        {waking ? "Opening the gallery…" : "Searching 139,845 faces…"}
+      </p>
+      <p className="eyebrow">
+        {waking ? "The model sleeps when nobody visits — waking it takes about 20 seconds" : "Comparing your face with every portrait"}
+      </p>
+      <div className="relative mt-1 h-px w-48 overflow-hidden bg-ivory/15">
+        <motion.div
+          className="absolute inset-y-0 w-1/3 bg-gradient-to-r from-transparent via-brass to-transparent"
+          animate={{ x: ["-100%", "300%"] }}
+          transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
+        />
+      </div>
+    </motion.div>
+  );
+}
+
+// ----------------------------------------------------------------------------- results
+const RANK_LABEL = ["The closest match", "Second", "Third"];
+
+function Results({
+  matches, frames, preview, onAgain,
+}: {
+  matches: Match[];
+  frames: FrameRect[] | null;
+  preview: string | null;
+  onAgain: () => void;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0, transition: { duration: 0.5 } }}
+      className="fixed inset-0 z-10"
+    >
+      <motion.h2
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 1.1, ease: EASE }}
+        className="pointer-events-none absolute inset-x-0 top-20 text-center font-display text-3xl font-light text-ivory sm:top-24 sm:text-5xl"
+      >
+        Your <em className="italic">doppelgängers</em>
+      </motion.h2>
+
+      {frames ? (
+        // plaques under the frames on the wall
+        matches.slice(0, 3).map((m, rank) => {
+          const f = frames[rank];
+          if (!f) return null;
+          return (
+            <motion.div
+              key={m.name + rank}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.9, ease: EASE, delay: 0.15 + rank * 0.18 }}
+              style={{ left: f.x + f.width / 2, top: f.y + f.height + 18 }}
+              className="pointer-events-none absolute w-max max-w-[30vw] -translate-x-1/2 text-center"
+            >
+              <Plaque match={m} rank={rank} />
+            </motion.div>
+          );
+        })
+      ) : (
+        // no WebGL: the same results as plain cards
+        <div className="absolute inset-x-0 top-40 flex flex-wrap items-start justify-center gap-6 px-6">
+          {matches.slice(0, 3).map((m, rank) => (
+            <div key={m.name + rank} className="flex w-44 flex-col items-center gap-3">
+              <div className="aspect-[3/4] w-full overflow-hidden rounded-sm border-4 border-brass/70 bg-black">
+                {m.thumbnail && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={m.thumbnail} alt={m.name} className="h-full w-full object-cover" />
+                )}
+              </div>
+              <Plaque match={m} rank={rank} />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {preview && (
+        <motion.figure
+          initial={{ opacity: 0, x: -16 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 1, ease: EASE, delay: 0.6 }}
+          className="glass absolute bottom-6 left-5 hidden items-center gap-3 rounded-full py-1.5 pl-1.5 pr-4 sm:flex"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={preview} alt="Your photo" className="h-10 w-10 rounded-full object-cover" />
+          <figcaption className="eyebrow">You</figcaption>
+        </motion.figure>
+      )}
+
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 1, ease: EASE, delay: 0.8 }}
+        className="absolute inset-x-0 bottom-6 flex flex-col items-center gap-3 px-6 text-center"
+      >
+        <button onClick={onAgain} className="btn-primary rounded-full px-7 py-3 text-sm font-semibold tracking-wide">
+          Try another photo
+        </button>
+        <p className="max-w-md text-[0.7rem] leading-relaxed text-ivory/45">
+          Match strength compares your score with the best matches of thousands of people who
+          aren&apos;t in the dataset: 80% means your match is closer than 80% of theirs.
+        </p>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function Plaque({ match, rank }: { match: Match; rank: number }) {
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <span className="eyebrow text-brass/90">{RANK_LABEL[rank] ?? `No. ${rank + 1}`}</span>
+      <span className={`font-display font-normal leading-tight text-ivory ${rank === 0 ? "text-2xl sm:text-3xl" : "text-lg sm:text-xl"}`}>
+        {match.name}
+      </span>
+      <span className="text-xs tabular-nums text-ivory/60">{Math.round(match.similarity * 100)}% match strength</span>
+    </div>
   );
 }
 
 function CameraIcon() {
   return (
-    <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+    <svg viewBox="0 0 24 24" width={15} height={15} fill="none" stroke="currentColor" strokeWidth={1.6} aria-hidden>
       <path d="M4 8h3l2-3h6l2 3h3v11H4z" strokeLinejoin="round" />
       <circle cx="12" cy="13" r="3.5" />
-    </svg>
-  );
-}
-
-function MatchCard({ match, rank }: { match: Match; rank: number }) {
-  const isTop = rank === 0;
-  const size = isTop ? "h-52 w-52 sm:h-56 sm:w-56" : "h-36 w-36 sm:h-40 sm:w-40";
-  const cardPad = isTop ? "p-6" : "p-4";
-  const accent = ACCENT_CLASSES[rank % ACCENT_CLASSES.length];
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 24, scale: 0.9, rotate: rank % 2 === 0 ? -4 : 4 }}
-      animate={{ opacity: 1, y: 0, scale: 1, rotate: isTop ? 0 : rank % 2 === 0 ? -3 : 3 }}
-      transition={{ delay: 0.15 + rank * 0.12, type: "spring", stiffness: 200, damping: 20 }}
-      whileHover={{ rotate: 0, scale: 1.03 }}
-      className={`relative flex flex-col items-center gap-3 rounded-[1.75rem] border-2 border-black/10 ${accent} ${cardPad} ${isTop ? "order-first z-10 sm:order-none" : ""}`}
-    >
-      {isTop && (
-        <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-black px-3 py-1 text-xs font-bold text-white">
-          ★ Best match
-        </span>
-      )}
-
-      {/* stacked-photo depth effect - two rotated cards peeking out behind the main photo */}
-      <div className={`relative ${size}`}>
-        <div className="absolute inset-0 -rotate-6 rounded-2xl border-2 border-black/10 bg-white/90" />
-        <div className="absolute inset-0 rotate-3 rounded-2xl border-2 border-black/10 bg-white/90" />
-        <div className="relative h-full w-full overflow-hidden rounded-2xl border-2 border-black/10">
-          {match.thumbnail ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={match.thumbnail} alt={match.name} className="h-full w-full object-cover" />
-          ) : (
-            <div className="h-full w-full bg-zinc-200" />
-          )}
-          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-3 pb-2 pt-6">
-            <div className="truncate text-sm font-bold text-white">{match.name}</div>
-            <div className="text-xs font-medium text-white/80">
-              {Math.round(match.similarity * 100)}% match strength
-            </div>
-          </div>
-        </div>
-      </div>
-    </motion.div>
-  );
-}
-
-function UserCard({ preview }: { preview: string }) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 24, scale: 0.9, rotate: 3 }}
-      animate={{ opacity: 1, y: 0, scale: 1, rotate: 2 }}
-      transition={{ type: "spring", stiffness: 200, damping: 20 }}
-      whileHover={{ rotate: 0, scale: 1.03 }}
-      className="card-accent-you relative flex flex-col items-center gap-3 rounded-[1.75rem] border-2 border-black/10 p-4"
-    >
-      <div className="relative h-40 w-40 sm:h-44 sm:w-44">
-        <div className="absolute inset-0 rotate-6 rounded-2xl border-2 border-black/10 bg-white/90" />
-        <div className="absolute inset-0 -rotate-3 rounded-2xl border-2 border-black/10 bg-white/90" />
-        <div className="relative h-full w-full overflow-hidden rounded-2xl border-2 border-black/10">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={preview} alt="Your photo" className="h-full w-full object-cover" />
-          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-3 pb-2 pt-6">
-            <div className="text-sm font-bold text-white">You</div>
-          </div>
-        </div>
-      </div>
-    </motion.div>
-  );
-}
-
-function StarAccent({
-  className,
-  size = 24,
-  rotate = 0,
-}: {
-  className?: string;
-  size?: number;
-  rotate?: number;
-}) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width={size}
-      height={size}
-      fill="currentColor"
-      className={`star-accent ${className ?? ""}`}
-      style={{ transform: `rotate(${rotate}deg)` }}
-    >
-      <path d="M12 0l2.5 8.5L23 12l-8.5 2.5L12 24l-2.5-9.5L1 12l8.5-3.5L12 0z" />
     </svg>
   );
 }

@@ -8,6 +8,13 @@ Upload a photo or take a live selfie, and find your three closest celebrity look
 
 The app detects the face, embeds it with ArcFace, and runs a cosine search over the index. The score is shown as a **match strength**: a percentile calibrated against how well thousands of people who *aren't* celebrities match.
 
+**The interface is a short film:**
+- **Landing:** a head made of 16,000 points of light turns to follow your cursor.
+- **On Find:** it disperses past the camera, and you glide through a dark museum of veiled portraits while the search runs.
+- **The ending:** spotlights reveal your three matches, framed on the end wall.
+
+It's built in plain three.js (`frontend/app/experience/`), with a custom shader per element and a bloom, grain and vignette pass. It runs at 60 fps, loads after the page is usable, and has fallbacks for phones, reduced motion and browsers without WebGL.
+
 What's in the repo:
 - **ML pipeline:** embedding 277k IMDB-WIKI photos on a rented GPU, duplicate and label-noise cleanup, leave-one-out retrieval evaluation, and score calibration against a real-face null distribution.
 - **Serving:** a FastAPI backend with Prometheus metrics and a Next.js 16 frontend with live camera capture.
@@ -142,6 +149,7 @@ python scripts/package_index.py            # -> data/deploy/index/ (what the bac
 ## Privacy & data
 
 - **Uploads:** decoded and embedded in memory only. Nothing is written to disk or logged, and the embedding is discarded after the request.
+- **Head scan:** the landing page's particle head is sampled from "Infinite, 3D Head Scan" by Lee Perry-Smith (Infinite Realities), [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/), via the three.js examples (`scripts/build_head_points.py`). Only the derived point cloud ships.
 - **Live selfie:** the camera stream stays in the browser. A frame is captured only when you press "Take photo", and the camera is released straight away.
 - **Dataset:** [IMDB-WIKI](https://data.vision.ee.ethz.ch/cvl/rrothe/imdb-wiki/) is licensed for **academic research only**. That's why the dataset, embeddings and thumbnails are gitignored, never baked into an image, and served from private storage.
 - **Calibration faces:** [FFHQ](https://github.com/NVlabs/ffhq-dataset) (NVIDIA, CC BY-NC-SA 4.0), used only to compute score percentiles. No FFHQ images are stored in the repo or the deployment.
