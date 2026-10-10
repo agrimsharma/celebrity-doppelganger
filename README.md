@@ -4,7 +4,7 @@ Upload a photo or take a live selfie, and find your three closest celebrity look
 
 **Live demo: [celebrity-doppelganger.vercel.app](https://celebrity-doppelganger.vercel.app)** (free hosting, so the first request after a quiet spell takes ~20 s while the model wakes up)
 
-<p align="center"><img src="docs/screenshots/app-results.jpg" width="820" alt="Results page: the uploaded face next to its three closest celebrity matches"></p>
+<p align="center"><img src="docs/screenshots/app-results.jpg" width="820" alt="Results: the three closest celebrity matches resolved inside frames of light, with name and match strength"></p>
 
 The app detects the face, embeds it with ArcFace, and runs a cosine search over the index. The score is shown as a **match strength**: a percentile calibrated against how well thousands of people who *aren't* celebrities match.
 
@@ -12,6 +12,10 @@ The app detects the face, embeds it with ArcFace, and runs a cosine search over 
 - **Landing:** a head made of 16,000 points of light turns to follow your cursor.
 - **On Find:** it disperses past the camera, and you glide through a gallery of light (portraits drawn in dots, floating in the dark) while the search runs.
 - **The ending:** a cloud of particles assembles into your three matches, each point coloured from its photo, and the real photos resolve inside frames of light.
+
+| | | |
+|---|---|---|
+| ![Landing: a head made of points of light](docs/screenshots/app-home.jpg) | ![The gallery of light](docs/screenshots/app-gallery.jpg) | ![The matches assembling from particles](docs/screenshots/app-assembling.jpg) |
 
 It's built in plain three.js (`frontend/app/experience/`), with a custom shader per element and a bloom, grain and vignette pass. It runs at 60 fps, loads after the page is usable, and has fallbacks for phones, reduced motion and browsers without WebGL.
 
